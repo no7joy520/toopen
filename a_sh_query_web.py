@@ -52,6 +52,11 @@ CACHE_DIR   = "cache/minutes"
 TIMEOUT_SEC = 2.5
 CACHE_WRITE_COOLDOWN = int(os.environ.get("CACHE_WRITE_COOLDOWN", "60"))
 
+# ====== 调试开关（新增）======
+# 打印“昨日同刻 / 近3日同刻”两项展示值的来源与关键中间量
+# True：打印；False：关闭
+DEBUG_SAME_TIME_LOG = True
+
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0",
@@ -860,20 +865,42 @@ def merge_today_tail(base_df: pd.DataFrame, today_df: pd.DataFrame) -> pd.DataFr
 
 def minutes_for_code_with_cache(code: str, start: Optional[str], end: Optional[str], verbose=True):
     code_std = code if code.startswith(("sh","sz")) else _parse_code_market(code)[2]
+    meta = {"cache_used": False, "qq_rows": 0, "tdx_fetched": False}
     df_cache = load_minutes_from_cache(code_std, start, end)
     if df_cache.empty:
         df_hist = fetch_minutes_tdx(code, freq=FREQ, start_date=start, end_date=end, verbose=verbose)
         save_minutes_to_cache(df_hist)
+        meta["tdx_fetched"] = True
     else:
         df_hist = df_cache
-    df_patch_today = fetch_tencent_today_minutes(code_std)
+        meta["cache_used"] = True
+            # ===== 新增：若缓存最新交易日 < 今天/最近交易日，则增量拉取补齐 =====
+        try:
+            last_cached_day = str(pd.to_datetime(df_hist["date"]).max().date())
+        except Exception:
+            last_cached_day = None
+        need_refresh = (last_cached_day is None) or (last_cached_day < today_str_cst())
+        if need_refresh:
+            df_inc = fetch_minutes_tdx(code, freq=FREQ,
+                                       start_date=last_cached_day,
+                                       end_date=today_str_cst(),
+                                       verbose=(verbose and code==MAIN_CODE))
+            if not df_inc.empty:
+                cols = list(set(df_hist.columns) | set(df_inc.columns))
+                df_hist = pd.concat([df_hist[cols], df_inc[cols]], ignore_index=True)
+                df_hist = df_hist.drop_duplicates(subset=["code","datetime"]).sort_values("datetime").reset_index(drop=True)
+                save_minutes_to_cache(df_inc)
+                meta["tdx_fetched"] = True
+
+        df_patch_today = fetch_tencent_today_minutes(code_std)
     if not df_patch_today.empty:
         df_hist = merge_today_tail(df_hist, df_patch_today)
+        meta["qq_rows"] = len(df_patch_today)
     try:
         save_minutes_to_cache(df_hist[df_hist["date"] == today_str_cst()])
     except Exception as e:
         print(f"[cache] 回写今日失败：{repr(e)}")
-    return df_hist, (df_patch_today if not df_patch_today.empty else pd.DataFrame())
+    return df_hist, (df_patch_today if not df_patch_today.empty else pd.DataFrame()), meta
 
 
 # ====== 判定（放量企稳标签） ======
@@ -999,9 +1026,14 @@ def quick_summary_and_diag():
     data_map: Dict[str, pd.DataFrame] = {}
     qq_map: Dict[str, pd.DataFrame] = {}
     for c in INDEX_CODES:
-        df_hist, df_qq_today = minutes_for_code_with_cache(c, HIST_START, HIST_END, verbose=(c==MAIN_CODE))
+        df_hist, df_qq_today, meta = minutes_for_code_with_cache(c, HIST_START, HIST_END, verbose=(c==MAIN_CODE))
         data_map[c] = df_hist
         qq_map[c] = df_qq_today
+    meta_map: Dict[str, dict] = {}
+    for c in INDEX_CODES:
+        if c not in meta_map:
+            _, _, meta = minutes_for_code_with_cache(c, HIST_START, HIST_END, verbose=False)
+        meta_map[c] = meta
 
     # —— 快讯摘要
     print("\n📰 快讯摘要（近实时，基于分钟数据）")
@@ -1152,6 +1184,8 @@ def quick_summary_and_diag():
     if same_today_amt_disp is None:
         dft_all = filter_cn_trading_minutes(df_main)
         seg = dft_all[(dft_all["date"] == same_ref_day) & (dft_all["hhmm"] <= now_hhmm)]
+        if DEBUG_SAME_TIME_LOG:
+            print(f"[debug.same] today_cum_amt 为 None，改用分段累计（ref_day={same_ref_day}, hhmm<={now_hhmm}），seg_rows={len(seg)}")
         same_today_amt_disp = float(seg["amount"].sum()) if ("amount" in seg.columns and not seg.empty) else None
 
     avg5_same_disp  = _same_time_means_for_display(df_main, same_ref_day, now_hhmm, 5)
@@ -1194,6 +1228,28 @@ def quick_summary_and_diag():
     mean_3_same_show = _scale_or_none(mean_3_same, k_close)
     ratio_today_vs_3_show = (same_today_amt_disp_show / mean_3_same_show) if (same_today_amt_disp_show and mean_3_same_show and mean_3_same_show>0) else None
     # ====== /补回展示 ======
+
+    # ====== 调试输出来源（新增） ======
+    if DEBUG_SAME_TIME_LOG:
+        meta_main = locals().get("meta_map", {}).get(MAIN_CODE, {})
+        print("[debug.same] ====== 同刻展示来源 ======")
+        print(f"[debug.same] ref_day={same_ref_day}, prev_day={prev_day}, hhmm<={now_hhmm}")
+        print(
+            f"[debug.same] cache_used={meta_main.get('cache_used')}, qq_rows={meta_main.get('qq_rows')}, tdx_fetched={meta_main.get('tdx_fetched')}")
+
+        print(f"[debug.same] k_close={k_close:.6f}（展示缩放系数，基于权威全日 / 同刻TDX累计）")
+        print(f"[debug.same] same_today_amt_disp(before_scale)={same_today_amt_disp}")
+        print(f"[debug.same] yday_same_amt(before_scale)={yday_same_amt}")
+        print(f"[debug.same] mean_3_same(before_scale)={mean_3_same}")
+        print(f"[debug.same] same_today_amt_disp_show={same_today_amt_disp_show}")
+        print(f"[debug.same] yday_same_amt_show={yday_same_amt_show}")
+        print(f"[debug.same] mean_3_same_show={mean_3_same_show}")
+        try:
+            _last = str(pd.to_datetime(filter_cn_trading_minutes(df_main)["date"]).max().date())
+            print(f"[debug.same] latest_trading_day_in_minutes = {_last}")
+        except Exception:
+            pass
+        print("[debug.same] =========================")
 
     if use_k:
         ratio_same_time = ratio
