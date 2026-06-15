@@ -4,11 +4,11 @@
 a_sh_query_web.py — 最终整合版（s_ 同步点位+涨跌幅+当日金额 · 覆盖即用 · 含当日口径校准因子k）
 
 * 历史分钟：pytdx（指数 get_index_bars，个股 get_security_bars），容错清洗 + 单位归一
-* 当日兜底：QQ 分时仅用于“点位更实时”的补尾（指数金额不再来自分时）
-* 成交额口径：腾讯简要行情 s_【第8字段=成交额(万元)】×1e4 → 元；失败回退分钟累计
+* 当日兜底：Wind/QQ 分时用于当日补尾（Wind主源，QQ兜底；指数金额优先Wind快照）
+* 成交额口径：Wind主源成交额；失败回退腾讯简要行情 s_ / 分钟累计
 * 点位口径：s_【最新点位/涨跌幅】；失败再退 QQ/TDX
-* 分析口径“一把尺”：盘中同刻用 k 对齐；盘后直接用权威口径覆盖“今日全日金额”
-* 展示一致性：同刻口径（展示）一律用 k_close 对齐权威（不改判定逻辑）
+* 分析口径“一把尺”：盘中同刻用 k 对齐；盘后直接用Wind主源口径覆盖“今日全日金额”
+* 展示一致性：同刻口径（展示）一律用 k_close 对齐Wind主源（不改判定逻辑）
 * 缓存：cache/minutes/{code}/{YYYYMMDD}.parquet（按日；失败降级 CSV）
 
 本版集成 6 个补丁 + 5 个微调，并“补回”两个同刻指标（仅展示，不影响判定）：
@@ -32,7 +32,7 @@ Y1) 昨日同刻累计额（展示） 及 “今日/昨日同刻倍数”
 Y2) 近3日同刻均额（展示） 及 “今日/近3日同刻倍数”
 """
 
-import os, time, json, math, random
+import os, time, json, math, random, subprocess
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, List
 
@@ -52,10 +52,31 @@ CACHE_DIR   = "cache/minutes"
 TIMEOUT_SEC = 2.5
 CACHE_WRITE_COOLDOWN = int(os.environ.get("CACHE_WRITE_COOLDOWN", "60"))
 
+# ====== Wind MCP 主源配置（新增，失败自动回落原免费源）======
+# USE_WIND=0 可临时关闭 Wind 主源，回到原腾讯/QQ/TDX 逻辑
+USE_WIND = os.environ.get("USE_WIND", "1") != "0"
+
+# 优先使用你本机已经验证成功的新 Node，避免误命中旧 Node 14 导致 fetch is not defined
+WIND_NODE_EXE = os.environ.get("WIND_NODE_EXE", r"D:\node\node.exe")
+WIND_SKILL_DIR = os.environ.get(
+    "WIND_SKILL_DIR",
+    os.path.join(os.path.expanduser("~"), ".agents", "skills", "wind-mcp-skill")
+)
+WIND_CLI = os.path.join(WIND_SKILL_DIR, "scripts", "cli.mjs")
+WIND_TIMEOUT_SEC = float(os.environ.get("WIND_TIMEOUT_SEC", "12"))
+
+# 本脚本内部代码 -> Wind 代码
+WIND_INDEX_CODE_MAP = {
+    "sh000001": "000001.SH",
+    "sz399001": "399001.SZ",
+    "sz399006": "399006.SZ",
+}
+
+
 # ====== 调试开关（新增）======
 # 打印“昨日同刻 / 近3日同刻”两项展示值的来源与关键中间量
 # True：打印；False：关闭
-DEBUG_SAME_TIME_LOG = True
+DEBUG_SAME_TIME_LOG = os.environ.get("DEBUG_SAME_TIME_LOG", "0") == "1"
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0",
@@ -80,6 +101,254 @@ SHOW_NORTHBOUND = False
 
 CST = timezone(timedelta(hours=8))
 _PARQUET_WARNED_ONCE = False
+
+# ====== Wind MCP 主源（新增，失败自动回落原免费源）======
+
+_WIND_WARNED = set()
+
+
+def _wind_warn_once(key: str, msg: str):
+    # Wind 报错只提示一次，避免刷屏。
+    if key in _WIND_WARNED:
+        return
+    _WIND_WARNED.add(key)
+    print(msg)
+
+
+def _wind_float(x):
+    if x is None:
+        return None
+    try:
+        s = str(x).strip()
+        if not s or s.upper() == "INVALID" or s.lower() == "null":
+            return None
+        v = float(s.replace(",", "").replace("%", ""))
+        return v if math.isfinite(v) else None
+    except Exception:
+        return None
+
+
+def _wind_table_to_rows(data: dict) -> List[dict]:
+    # Wind MCP 返回结构一般是：
+    # data.columns = [{"name": "..."}]
+    # data.rows    = [[...], [...]]
+    # 这里统一转成 list[dict]，方便后续取字段。
+    if not isinstance(data, dict):
+        return []
+
+    cols_raw = data.get("columns") or []
+    rows_raw = data.get("rows") or []
+
+    cols = []
+    for c in cols_raw:
+        if isinstance(c, dict):
+            cols.append(c.get("name"))
+        else:
+            cols.append(str(c))
+
+    rows = []
+    for r in rows_raw:
+        item = {}
+        for i, col in enumerate(cols):
+            if not col:
+                continue
+            item[col] = r[i] if i < len(r) else None
+        rows.append(item)
+    return rows
+
+
+def _call_wind_mcp(server_type: str, tool_name: str, params: dict) -> Optional[dict]:
+    # Python -> D:\node\node.exe -> wind-mcp-skill/scripts/cli.mjs -> Wind
+    # 任何异常都返回 None，让外层自动回落原逻辑。
+    if not USE_WIND:
+        return None
+
+    if not os.path.exists(WIND_NODE_EXE):
+        _wind_warn_once("node_missing", f"[wind] 找不到 Node：{WIND_NODE_EXE}，已回落原数据源")
+        return None
+
+    if not os.path.exists(WIND_CLI):
+        _wind_warn_once("cli_missing", f"[wind] 找不到 Wind CLI：{WIND_CLI}，已回落原数据源")
+        return None
+
+    try:
+        params_json = json.dumps(params, ensure_ascii=False)
+        cmd = [
+            WIND_NODE_EXE,
+            WIND_CLI,
+            "call",
+            server_type,
+            tool_name,
+            params_json,
+        ]
+
+        p = subprocess.run(
+            cmd,
+            cwd=WIND_SKILL_DIR,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=WIND_TIMEOUT_SEC,
+        )
+
+        if p.returncode != 0:
+            _wind_warn_once(
+                f"cmd_fail_{server_type}_{tool_name}",
+                f"[wind] 调用失败：{server_type}.{tool_name}，已回落原数据源；err={p.stderr.strip()[:300]}"
+            )
+            return None
+
+        outer = json.loads(p.stdout)
+        if outer.get("isError"):
+            _wind_warn_once(
+                f"outer_error_{server_type}_{tool_name}",
+                f"[wind] 返回 isError：{server_type}.{tool_name}，已回落原数据源"
+            )
+            return None
+
+        content = outer.get("content") or []
+        if not content:
+            return None
+
+        inner_text = content[0].get("text")
+        if not inner_text:
+            return None
+
+        inner = json.loads(inner_text)
+        if inner.get("error"):
+            _wind_warn_once(
+                f"inner_error_{server_type}_{tool_name}",
+                f"[wind] 内层返回 error：{server_type}.{tool_name}，已回落原数据源"
+            )
+            return None
+
+        return inner
+    except Exception as e:
+        _wind_warn_once(
+            f"exception_{server_type}_{tool_name}",
+            f"[wind] 异常：{server_type}.{tool_name}，已回落原数据源；err={repr(e)[:300]}"
+        )
+        return None
+
+
+def fetch_wind_index_snapshot(code_std: str) -> Optional[dict]:
+    # Wind 指数快照：
+    #     最新成交价 -> last
+    #     涨跌幅     -> pct
+    #     成交额     -> amt_yuan，单位：元
+    # 返回结构伪装成原 fetch_index_simple_quote() 的结构，主流程无需改。
+    windcode = WIND_INDEX_CODE_MAP.get(code_std)
+    if not windcode:
+        return None
+
+    inner = _call_wind_mcp(
+        "index_data",
+        "get_index_price_indicators",
+        {
+            "windcode": windcode,
+            "indexes": "最新成交价,涨跌幅,成交量,成交额",
+        },
+    )
+    if not inner:
+        return None
+
+    rows = _wind_table_to_rows(inner.get("data") or {})
+    if not rows:
+        return None
+
+    row = rows[0]
+    last = _wind_float(row.get("最新成交价"))
+    pct = _wind_float(row.get("涨跌幅"))
+    amt_yuan = _wind_float(row.get("成交额"))
+
+    if last is None and pct is None and amt_yuan is None:
+        return None
+
+    # 复用原来的权威金额稳定器，避免金额异常回跳
+    amt_yuan = _stable_authoritative(code_std, amt_yuan)
+
+    return {
+        "last": last,
+        "pct": pct,
+        "amt_yuan": amt_yuan,
+    }
+
+
+def fetch_wind_today_minutes(code_std: str) -> pd.DataFrame:
+    # Wind 今日分钟行情：
+    #     TIME     -> datetime / date / time
+    #     MATCH    -> close
+    #     VOLUME   -> vol
+    #     TURNOVER -> amount，单位：元，且为每分钟成交额增量
+    # 注意：Wind 的 TURNOVER 已实测：全日分钟求和 = 快照成交额。
+    windcode = WIND_INDEX_CODE_MAP.get(code_std)
+    if not windcode:
+        return pd.DataFrame()
+
+    inner = _call_wind_mcp(
+        "index_data",
+        "get_index_quote",
+        {
+            "windcode": windcode,
+        },
+    )
+    if not inner:
+        return pd.DataFrame()
+
+    rows = _wind_table_to_rows(inner.get("data") or {})
+    if not rows:
+        return pd.DataFrame()
+
+    out = []
+    today = today_str_cst()
+
+    for r in rows:
+        ts_raw = r.get("TIME")
+        ts = pd.to_datetime(ts_raw, errors="coerce")
+        if pd.isna(ts):
+            continue
+
+        # Wind 返回类似 2026-06-15T09:30:00.000+08:00
+        # 这里去掉时区信息但保留本地 09:30，不转 UTC。
+        try:
+            if getattr(ts, "tzinfo", None) is not None:
+                ts = ts.tz_localize(None)
+        except Exception:
+            pass
+
+        date_str = ts.strftime("%Y-%m-%d")
+        if date_str != today:
+            continue
+
+        close = _wind_float(r.get("MATCH"))
+        if close is None:
+            continue
+
+        vol = _wind_float(r.get("VOLUME"))
+        amt = _wind_float(r.get("TURNOVER"))
+
+        out.append({
+            "code": code_std,
+            "date": date_str,
+            "time": ts.strftime("%H:%M"),
+            "datetime": ts.to_pydatetime(),
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "vol": vol if vol is not None else 0.0,
+            "amount": amt if amt is not None else 0.0,
+            "_amount_estimated": False,
+        })
+
+    if not out:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(out)
+    df = df.drop_duplicates(subset=["code", "datetime"]).sort_values("datetime").reset_index(drop=True)
+    return df
+
 
 # ====== 工具 ======
 
@@ -259,6 +528,12 @@ def fetch_index_simple_quote(code_std: str) -> Optional[dict]:
         if now_ts - ts < _SQUOTE_TTL:
             return val
 
+    # Wind 主源：成功则直接返回；失败自动继续走原腾讯 s_ 逻辑
+    wind_sq = fetch_wind_index_snapshot(code_std)
+    if wind_sq is not None:
+        _SQUOTE_CACHE[sid] = (now_ts, wind_sq)
+        return wind_sq
+
     url = Q_SIMPLE_QUOTE + sid
 
     def _try_once():
@@ -424,6 +699,11 @@ def rows_to_df_m1(arr, code_std: str) -> pd.DataFrame:
         df["_amount_estimated"] = False
     return df
 def fetch_tencent_today_minutes(code_std: str) -> pd.DataFrame:
+    # Wind 主源：成功则直接返回；失败自动继续走原 QQ 分时逻辑
+    wind_df = fetch_wind_today_minutes(code_std)
+    if not wind_df.empty:
+        return wind_df
+
     param = f"{code_std},m1,,4000"
     txt = None
     for ep in Q_MKLINE_ENDPOINTS:
@@ -557,7 +837,7 @@ def _gc_cache_days(code_std: str, keep_days=180):
 
 def _atomic_write_dataframe(df: pd.DataFrame, path: str):
     global _PARQUET_WARNED_ONCE
-    tmp = path + f".tmp*{os.getpid()}*{int(time.time()*1000)}"
+    tmp = path + f".tmp_{os.getpid()}_{int(time.time()*1000)}"
     try:
         df.to_parquet(tmp, index=False); os.replace(tmp, path)
     except Exception as e:
@@ -809,7 +1089,7 @@ def compute_intraday_scale_k(df_all: pd.DataFrame, code_std: str, now_hhmm: Opti
     if not math.isfinite(k) or k <= 0: return 1.0
     k = max(0.01, min(100.0, k))
     if abs(k-1.0) > 0.02:
-        print(f"[align] 应用当日口径校准因子 k={k:.4f}（权威口径对齐 TDX 分钟）")
+        print(f"[align] 应用当日口径校准因子 k={k:.4f}（Wind主源口径对齐 TDX 分钟）")
     return k
 # ====== 形态 & 技术 ======
 
@@ -864,6 +1144,7 @@ def merge_today_tail(base_df: pd.DataFrame, today_df: pd.DataFrame) -> pd.DataFr
 # ====== 缓存加载主入口（带今日补尾） ======
 
 def minutes_for_code_with_cache(code: str, start: Optional[str], end: Optional[str], verbose=True):
+    df_patch_today = pd.DataFrame()  # 防御：后续任何分支都可以安全返回/引用
     code_std = code if code.startswith(("sh","sz")) else _parse_code_market(code)[2]
     meta = {"cache_used": False, "qq_rows": 0, "tdx_fetched": False}
     df_cache = load_minutes_from_cache(code_std, start, end)
@@ -892,7 +1173,7 @@ def minutes_for_code_with_cache(code: str, start: Optional[str], end: Optional[s
                 save_minutes_to_cache(df_inc)
                 meta["tdx_fetched"] = True
 
-        df_patch_today = fetch_tencent_today_minutes(code_std)
+    df_patch_today = fetch_tencent_today_minutes(code_std)
     if not df_patch_today.empty:
         df_hist = merge_today_tail(df_hist, df_patch_today)
         meta["qq_rows"] = len(df_patch_today)
@@ -911,7 +1192,7 @@ def judge_volume_stabilize(ratio_same_time: Optional[float],
                            r5_full_or_same: Optional[float],
                            r20_full_or_same: Optional[float],
                            slope_sign: int) -> Tuple[str, List[str]]:
-    """补丁5：强放量=两项≥1.10x 或 单项≥1.30x；mid 包含 0.95~1.10 灰区。"""
+    """量能判断：<1.05x 基本持平；1.05~1.15x 略强；>=1.15x 或单项>=1.30x 才算明显放量。"""
     vals = [v for v in [ratio_same_time, r5_full_or_same, r20_full_or_same] if isinstance(v,(int,float)) and math.isfinite(v)]
     reasons = []
     if ratio_same_time is not None: reasons.append(f"同刻对比近5日均额倍数≈{ratio_same_time:.2f}x")
@@ -926,24 +1207,29 @@ def judge_volume_stabilize(ratio_same_time: Optional[float],
             uniq.append(r); seen.add(key)
     reasons = uniq
 
-    cnt_ge_110 = sum(1 for v in vals if v >= 1.10)
+    cnt_ge_115 = sum(1 for v in vals if v >= 1.15)
     any_ge_130 = any(v >= 1.30 for v in vals)
-    any_ge_100 = any(v >= 1.00 for v in vals)
+    any_ge_105 = any(v >= 1.05 for v in vals)
     any_ge_095 = any(v >= 0.95 for v in vals)
 
-    strong = (cnt_ge_110 >= 2) or any_ge_130
-    mid    = (not strong) and (any_ge_100 or any_ge_095)
+    strong = (cnt_ge_115 >= 2) or any_ge_130
+    mild   = (not strong) and any_ge_105
+    flat   = (not strong) and (not mild) and any_ge_095
 
-    # 若价格短线走弱但量能显著（≥1.30x），仍可判“✅放量企稳”；否则“⚠️放量但未企稳”
     if strong and slope_sign < 0:
         if any_ge_130:
             return "✅放量企稳", reasons if reasons else ["量能显著回升，即便短线走弱"]
-        return "⚠️放量但未企稳", reasons if reasons else ["放量明显，但价格仍走弱"]
+        return "⚠️明显放量但未企稳", reasons if reasons else ["放量明显，但价格仍走弱"]
 
     if strong and slope_sign >= 0:
-        return "✅放量企稳", reasons if reasons else ["当日成交额显著高于历史均值，价格止跌/走稳"]
-    if mid:
-        return "⚠️放量但未企稳", reasons if reasons else ["量能回升，但力度有限或价格仍偏弱"]
+        return "✅放量企稳", reasons if reasons else ["成交额明显高于历史均值，价格止跌/走稳"]
+
+    if mild:
+        return "⚠️量能略强但未企稳", reasons if reasons else ["量能略高于历史均值，但力度仍需确认"]
+
+    if flat:
+        return "⚠️量能基本持平，尚未企稳", reasons if reasons else ["量能接近历史均值，尚未形成明确放量"]
+
     return "❌尚未企稳", reasons if reasons else ["量能与价格均未见企稳特征"]
 
 
@@ -1021,18 +1307,15 @@ def last_n_same_time_mean(df_all: pd.DataFrame, ref_day: str, hhmm: str, n: int)
 # ====== 主流程：快讯 + 分析 + 结论（含“昨日同刻/近3日同刻”展示回补） ======
 
 def quick_summary_and_diag():
-    print(">>> 启动 A 股快讯 & 诊断（pytdx 历史 + 腾讯当日兜底 + 分析模块）")
+    print(">>> 启动 A 股快讯 & 诊断（pytdx 历史 + Wind主源/QQ兜底 + 分析模块）")
 
     data_map: Dict[str, pd.DataFrame] = {}
     qq_map: Dict[str, pd.DataFrame] = {}
+    meta_map: Dict[str, dict] = {}
     for c in INDEX_CODES:
         df_hist, df_qq_today, meta = minutes_for_code_with_cache(c, HIST_START, HIST_END, verbose=(c==MAIN_CODE))
         data_map[c] = df_hist
         qq_map[c] = df_qq_today
-    meta_map: Dict[str, dict] = {}
-    for c in INDEX_CODES:
-        if c not in meta_map:
-            _, _, meta = minutes_for_code_with_cache(c, HIST_START, HIST_END, verbose=False)
         meta_map[c] = meta
 
     # —— 快讯摘要
@@ -1097,7 +1380,7 @@ def quick_summary_and_diag():
         # 当日金额：优先权威（使用缓存），否则分钟累计
         amt_today_auth = get_auth_today_cached(c)
         if amt_today_auth is not None:
-            amt_today = amt_today_auth; src_amt = "（口径：腾讯权威）"
+            amt_today = amt_today_auth; src_amt = "（口径：Wind主源）"
         else:
             amt_today = tdx_today["amount"].sum() if "amount" in tdx_today.columns else float("nan")
             src_amt = "（口径：分钟累计）"
@@ -1237,7 +1520,7 @@ def quick_summary_and_diag():
         print(
             f"[debug.same] cache_used={meta_main.get('cache_used')}, qq_rows={meta_main.get('qq_rows')}, tdx_fetched={meta_main.get('tdx_fetched')}")
 
-        print(f"[debug.same] k_close={k_close:.6f}（展示缩放系数，基于权威全日 / 同刻TDX累计）")
+        print(f"[debug.same] k_close={k_close:.6f}（展示缩放系数，基于Wind主源全日 / 同刻TDX累计）")
         print(f"[debug.same] same_today_amt_disp(before_scale)={same_today_amt_disp}")
         print(f"[debug.same] yday_same_amt(before_scale)={yday_same_amt}")
         print(f"[debug.same] mean_3_same(before_scale)={mean_3_same}")
@@ -1258,21 +1541,21 @@ def quick_summary_and_diag():
         ratio_same_time = None
         r5_for_judge, r20_for_judge = r5_full, r20_full
 
-    print("\n📊 数据分析（以上证为主 · 全日口径 + 同刻口径，已对齐权威口径）")
-    print("A) 全日口径（权威全日 vs 历史全日）")
+    print("\n📊 数据分析（以上证为主 · 全日口径 + 同刻口径，已对齐Wind主源口径）")
+    print("A) 全日口径（Wind主源全日 vs 历史全日）")
     print("   1) 当日全日金额：", readable_billion_from_yuan(amt_full_today))
     print("      近5日全日均额：", readable_billion_from_yuan(avg5_full), "；近20日全日均额：", readable_billion_from_yuan(avg20_full))
     print(f"      - 对比5日倍数：{fmt_ratio(r5_full)}")
     print(f"      - 对比20日倍数：{fmt_ratio(r20_full)}")
 
-    print("B) 同刻口径（同刻累计×k_close 对齐权威 vs 历史同刻）")
+    print("B) 同刻口径（同刻累计×k_close 对齐Wind主源 vs 历史同刻）")
     print("   2) 当前同刻累计额（展示）：", readable_billion_from_yuan(same_today_amt_disp_show), f"（时刻：{now_hhmm or '-'}）")
     print("      近5日同刻均额（展示）：", readable_billion_from_yuan(avg5_same_disp_show), "；近20日同刻均额（展示）：", readable_billion_from_yuan(avg20_same_disp_show))
     print(f"      - 同刻对比5日倍数（展示）：{fmt_ratio(r5_same_disp_show)}")
     print(f"      - 同刻对比20日倍数（展示）：{fmt_ratio(r20_same_disp_show)}")
 
     # 【微调 C】口径说明
-    print("※ 说明：盘后同刻口径为“15:00 时刻累计”并以 k_close 对齐权威；全日口径为“权威全日”。两者口径不同，数值可不一致。")
+    print("※ 说明：盘后同刻口径为“15:00 时刻累计”并以 k_close 对齐Wind主源；全日口径为“Wind主源全日”。两者口径不同，数值可不一致。")
 
     # ====== 【补回打印】昨日同刻 & 近3日同刻（展示）
     print("   3) 昨日同刻累计额（展示）：", readable_billion_from_yuan(yday_same_amt_show))
@@ -1291,10 +1574,23 @@ def quick_summary_and_diag():
                 if l60  is not None: l60  *= k
                 if l5   is not None: l5   *= k
             if d_avg and d_avg != 0 and l60 is not None and l5 is not None:
-                print("C) 分时（金额口径 · 已对齐权威口径）")
+                print("C) 分时（金额口径 · 已对齐Wind主源口径）")
                 try:
+                    recent_label = "最近1小时"
+                    try:
+                        dft_tmp = filter_cn_trading_minutes(df_main)
+                        today_tmp = dft_tmp["date"].max() if not dft_tmp.empty else None
+                        seg_tmp = _take_current_segment(dft_tmp[dft_tmp["date"] == today_tmp].copy()) if today_tmp is not None else pd.DataFrame()
+                        bars60 = _bars_for_minutes(FREQ, 60)
+                        if len(seg_tmp) < bars60:
+                            unit_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}.get(FREQ, 1)
+                            recent_minutes = len(seg_tmp) * unit_min
+                            recent_label = f"最近{recent_minutes}分钟" if recent_minutes > 0 else "最近可用时段"
+                    except Exception:
+                        recent_label = "最近可用时段"
+
                     print(f"   - 当日分钟均额（当前段）：{readable_billion_from_yuan(d_avg)}")
-                    print(f"   - 最近1小时 / 分钟均额：{(l60/d_avg):.2f}x")
+                    print(f"   - {recent_label} / 分钟均额：{(l60/d_avg):.2f}x")
                     print(f"   - 最近5分钟 / 分钟均额：{(l5/d_avg):.2f}x")
                 except Exception:
                     pass
@@ -1376,23 +1672,28 @@ def quick_summary_and_diag():
         if reasons_same:
             for i, r in enumerate(reasons_same, 1):
                 print(f"  · 盘中依据{i}：{r}")
+        print("- 收盘结论（基于全日口径）：⏳待收盘后判断")
+        print("  · 当前仍为盘中，当前累计成交额不能直接作为全日成交额判断。")
     else:
         print(f"- 同刻结论（收盘同刻）：{tag_same}")
         if reasons_same:
             for i, r in enumerate(reasons_same, 1):
                 print(f"  · 同刻依据{i}：{r}")
-    print(f"- 收盘结论（基于全日口径）：{tag_full}")
-    if reasons_full:
-        for i, r in enumerate(reasons_full, 1):
-            print(f"  · 收盘依据{i}：{r}")
+        print(f"- 收盘结论（基于全日口径）：{tag_full}")
+        if reasons_full:
+            for i, r in enumerate(reasons_full, 1):
+                print(f"  · 收盘依据{i}：{r}")
 
 
 def main():
     try:
         quick_summary_and_diag()
+    except KeyboardInterrupt:
+        print("\n用户中断。")
+        raise
     except Exception as e:
-        print(f"[fatal] 运行失败：{repr(e)}")
-
+        print(f"[fatal] 主流程异常：{repr(e)}")
+        raise
 
 if __name__ == "__main__":
     main()
