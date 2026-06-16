@@ -7,3 +7,8 @@
 
 # 保留要追踪的脚本文件
 !a_sh_query_web.py
+__pycache__/
+*.pyc
+a_sh_query_web.py.bak_*
+apply_*.py
+cache/
