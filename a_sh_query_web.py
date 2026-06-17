@@ -44,6 +44,12 @@ from pytdx.hq import TdxHq_API
 
 INDEX_CODES = ["sh000001", "sz399001", "sz399006"]
 MAIN_CODE   = "sh000001"
+INDEX_NAME_MAP = {
+    "sh000001": "上证指数",
+    "sz399001": "深证成指",
+    "sz399006": "创业板指",
+}
+MARKET_PROXY_CODES = ("sh000001", "sz399001")  # 两市成交额 proxy：沪市代表 + 深市代表；创业板只做结构参考
 FREQ        = "1m"
 HIST_START  = None
 HIST_END    = None
@@ -1855,6 +1861,431 @@ def calc_today_basic_state(df_main: pd.DataFrame) -> Tuple[pd.DataFrame, Optiona
     return dft_main, latest_day, is_today
 
 
+
+def _ratio_or_none(num, den):
+    # 安全倍数计算。
+    if isinstance(num, (int, float)) and isinstance(den, (int, float)):
+        if math.isfinite(num) and math.isfinite(den) and den > 0:
+            return num / den
+    return None
+
+
+def _sum_or_none(values: List[Optional[float]]) -> Optional[float]:
+    # 只有所有分项都有效时才求和，避免半截口径误导。
+    if not values:
+        return None
+    out = 0.0
+    for v in values:
+        if not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out += float(v)
+    return out
+
+
+def _pct_text(v: Optional[float]) -> str:
+    if isinstance(v, (int, float)) and math.isfinite(v):
+        return f"{v:+.2f}%"
+    return "--"
+
+
+def _price_position_text(last: Optional[float], ma5, ma10, ma20) -> str:
+    # 简单描述指数相对均线的位置。
+    if not isinstance(last, (int, float)) or not math.isfinite(last):
+        return "位置不可判定"
+    parts = []
+    for name, ma in [("MA5", ma5), ("MA10", ma10), ("MA20", ma20)]:
+        if isinstance(ma, (int, float)) and math.isfinite(ma):
+            parts.append(f"{'站上' if last >= ma else '低于'}{name}")
+    return "，".join(parts) if parts else "均线样本不足"
+
+
+def _get_display_quote_for_diag(code: str, daily: pd.DataFrame) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    # 获取诊断展示用点位 / 涨跌幅 / 来源；涨跌幅缺失时用前收回算。
+    sq = fetch_index_simple_quote(code)
+    last = None
+    pct = None
+    src = None
+
+    if sq:
+        if isinstance(sq.get("last"), (int, float)) and math.isfinite(sq.get("last")):
+            last = float(sq.get("last"))
+        if isinstance(sq.get("pct"), (int, float)) and math.isfinite(sq.get("pct")):
+            pct = float(sq.get("pct"))
+        src = sq.get("quote_source") or sq.get("source")
+
+    if pct is None and last is not None and daily is not None and not daily.empty and len(daily) >= 2:
+        try:
+            prev = float(daily["close"].iloc[-2])
+            if math.isfinite(prev) and prev > 0:
+                pct = (last / prev - 1.0) * 100.0
+        except Exception:
+            pass
+
+    return last, pct, src
+
+
+def build_single_index_deep_diag(code: str, df_all: pd.DataFrame) -> dict:
+    # 构造单个指数的深度诊断结果。只复用现有计算，不改变底层数据源和原判断规则。
+    name = INDEX_NAME_MAP.get(code, code.upper())
+    if df_all is None or df_all.empty:
+        return {"code": code, "name": name, "ok": False, "error": "数据为空"}
+
+    dft, latest_day, is_today = calc_today_basic_state(df_all)
+    if dft.empty:
+        return {"code": code, "name": name, "ok": False, "error": "无交易时段数据"}
+
+    ratio, today_cum_amt, hist_avg_same_time, now_hhmm, use_day, _ = intraday_amt_ratio(df_all, window_days=WINDOW_DAYS)
+    market_close_hhmm = "14:59"
+    use_k = calc_use_k(is_today, now_hhmm, market_close_hhmm)
+
+    if use_k:
+        mkt, pure, code_std = _parse_code_market(code)
+        k = compute_intraday_scale_k(df_all, code_std, now_hhmm) if _is_index(mkt, pure) else 1.0
+        if k != 1.0 and today_cum_amt is not None:
+            today_cum_amt *= k
+            if (hist_avg_same_time is not None) and (hist_avg_same_time > 0):
+                ratio = today_cum_amt / hist_avg_same_time
+    else:
+        k = 1.0
+
+    daily = minutes_to_daily(df_all)
+    daily = _ensure_daily_schema(daily if not daily.empty else pd.DataFrame(columns=["date", "amount"]))
+
+    if not use_k:
+        amt_auth = get_auth_today_cached(code)
+        if amt_auth is not None:
+            ref_day = pd.to_datetime(use_day or today_str_cst(), errors="coerce")
+            if daily.empty or (daily["date"] == ref_day).sum() == 0:
+                row = {c: pd.NA for c in daily.columns}
+                row["date"] = ref_day
+                row["amount"] = float(amt_auth)
+                daily = pd.concat([daily, pd.DataFrame([row])], ignore_index=True)
+            daily.loc[daily["date"] == ref_day, "amount"] = float(amt_auth)
+            daily = daily.sort_values("date").reset_index(drop=True)
+
+    amt_full_today = get_auth_today_cached(code)
+    if (amt_full_today is None) and (not daily.empty) and ("amount" in daily.columns):
+        try:
+            amt_full_today = float(daily.iloc[-1]["amount"])
+        except Exception:
+            amt_full_today = None
+
+    ref_day_full = pd.to_datetime(use_day or latest_day or today_str_cst(), errors="coerce")
+    if ("amount" in daily.columns) and (not daily.empty) and (not pd.isna(ref_day_full)):
+        daily_hist_full = daily[daily["date"] < ref_day_full].copy()
+    else:
+        daily_hist_full = pd.DataFrame()
+
+    avg5_full = (daily_hist_full["amount"].tail(5).mean() if ("amount" in daily_hist_full.columns and len(daily_hist_full) >= 5) else None)
+    avg20_full = (daily_hist_full["amount"].tail(20).mean() if ("amount" in daily_hist_full.columns and len(daily_hist_full) >= 20) else None)
+    r5_full = _ratio_or_none(amt_full_today, avg5_full)
+    r20_full = _ratio_or_none(amt_full_today, avg20_full)
+
+    if now_hhmm is None:
+        now_hhmm = "15:00"
+    same_ref_day = use_day if use_day is not None else (dft["date"].max() if not dft.empty else today_str_cst())
+
+    same_today_amt = today_cum_amt
+    if same_today_amt is None:
+        dft_all = filter_cn_trading_minutes(df_all)
+        seg = dft_all[(dft_all["date"] == same_ref_day) & (dft_all["hhmm"] <= now_hhmm)]
+        same_today_amt = float(seg["amount"].sum()) if ("amount" in seg.columns and not seg.empty) else None
+
+    avg5_same = _same_time_means_for_display(df_all, same_ref_day, now_hhmm, 5)
+    avg20_same = _same_time_means_for_display(df_all, same_ref_day, now_hhmm, 20)
+    r5_same_raw = _ratio_or_none(same_today_amt, avg5_same)
+    r20_same_raw = _ratio_or_none(same_today_amt, avg20_same)
+
+    # 展示缩放：同刻展示值对齐权威金额，逻辑沿用主流程。
+    k_close = 1.0
+    try:
+        A_auth_display = get_auth_today_cached(code)
+        if A_auth_display is not None:
+            dft_all_disp = filter_cn_trading_minutes(df_all)
+            seg_disp = dft_all_disp[(dft_all_disp["date"] == same_ref_day) & (dft_all_disp["hhmm"] <= now_hhmm)]
+            A_tdx_same = float(seg_disp["amount"].sum()) if ("amount" in seg_disp.columns and not seg_disp.empty) else None
+            if A_tdx_same and A_tdx_same > 0:
+                k_close = A_auth_display / A_tdx_same
+                if not math.isfinite(k_close) or k_close <= 0:
+                    k_close = 1.0
+    except Exception:
+        k_close = 1.0
+
+    same_today_show = _scale_or_none(same_today_amt, k_close)
+    avg5_same_show = _scale_or_none(avg5_same, k_close)
+    avg20_same_show = _scale_or_none(avg20_same, k_close)
+    r5_same_show = _ratio_or_none(same_today_show, avg5_same_show)
+    r20_same_show = _ratio_or_none(same_today_show, avg20_same_show)
+
+    dft_all = filter_cn_trading_minutes(df_all)
+    prev_day = get_prev_trading_day(dft_all, same_ref_day)
+    yday_same = same_time_cum_amount(df_all, prev_day, now_hhmm) if prev_day else None
+    yday_same_show = _scale_or_none(yday_same, k_close)
+    ratio_yday_show = _ratio_or_none(same_today_show, yday_same_show)
+
+    mean_3_same = last_n_same_time_mean(df_all, same_ref_day, now_hhmm, n=3)
+    mean_3_same_show = _scale_or_none(mean_3_same, k_close)
+    ratio_3_show = _ratio_or_none(same_today_show, mean_3_same_show)
+
+    ma = moving_averages(daily, windows=(5, 10, 20)) if not daily.empty else pd.DataFrame()
+    if not ma.empty:
+        last_row = ma.tail(1).iloc[0]
+        ma5, ma10, ma20 = last_row.get("ma5"), last_row.get("ma10"), last_row.get("ma20")
+        close_last = last_row.get("close")
+    else:
+        ma5 = ma10 = ma20 = close_last = None
+
+    support, resistance = support_resistance(daily, lookback=20) if not daily.empty else (None, None)
+    long_lower, big_bull, reversal = candle_signals_last3(daily) if not daily.empty else (False, False, False)
+    slope_sign = calc_slope_sign(daily)
+
+    tag_same, reasons_same_raw, tag_full, reasons_full_raw = build_judge_results(
+        ratio,
+        r5_same_raw,
+        r20_same_raw,
+        r5_full,
+        r20_full,
+        slope_sign
+    )
+    reasons_same, reasons_full = build_reason_lists(
+        r5_same_show,
+        r20_same_show,
+        ratio_yday_show,
+        ratio_3_show,
+        r5_full,
+        r20_full,
+        reasons_same_raw,
+        reasons_full_raw
+    )
+
+    is_close = calc_is_close(is_today, now_hhmm, market_close_hhmm)
+    n_hist_days = calc_same_time_sample_days(df_all, dft, use_day, now_hhmm)
+    source_label = _source_label(get_auth_today_cached_source(code)) if get_auth_today_cached(code) is not None else "分钟累计"
+    last_price, pct, quote_source = _get_display_quote_for_diag(code, daily)
+
+    return {
+        "ok": True,
+        "code": code,
+        "name": name,
+        "latest_day": latest_day,
+        "same_ref_day": same_ref_day,
+        "now_hhmm": now_hhmm,
+        "is_today": is_today,
+        "is_close": is_close,
+        "amount_source_label": source_label,
+        "quote_source_label": _source_label(quote_source),
+        "last_price": last_price,
+        "pct": pct,
+        "amt_full_today": amt_full_today,
+        "avg5_full": avg5_full,
+        "avg20_full": avg20_full,
+        "r5_full": r5_full,
+        "r20_full": r20_full,
+        "same_today_show": same_today_show,
+        "avg5_same_show": avg5_same_show,
+        "avg20_same_show": avg20_same_show,
+        "r5_same_show": r5_same_show,
+        "r20_same_show": r20_same_show,
+        "yday_same_show": yday_same_show,
+        "ratio_yday_show": ratio_yday_show,
+        "mean_3_same_show": mean_3_same_show,
+        "ratio_3_show": ratio_3_show,
+        "ma5": ma5,
+        "ma10": ma10,
+        "ma20": ma20,
+        "close_last": close_last,
+        "support": support,
+        "resistance": resistance,
+        "candle_flags": (long_lower, big_bull, reversal),
+        "slope_sign": slope_sign,
+        "tag_same": tag_same,
+        "tag_full": tag_full,
+        "reasons_same": reasons_same,
+        "reasons_full": reasons_full,
+        "n_hist_days": n_hist_days,
+        "k": k,
+        "k_close": k_close,
+    }
+
+
+def build_index_deep_diag_map(data_map: Dict[str, pd.DataFrame]) -> Dict[str, dict]:
+    # 三大指数逐个生成深度诊断。
+    return {c: build_single_index_deep_diag(c, data_map.get(c, pd.DataFrame())) for c in INDEX_CODES}
+
+
+def print_three_index_deep_diagnostics(diag_map: Dict[str, dict]) -> None:
+    # 打印三大指数独立诊断。
+    print("\n🔎 三大指数独立诊断")
+    for idx, c in enumerate(INDEX_CODES, 1):
+        d = diag_map.get(c, {})
+        name = d.get("name", c.upper())
+        if not d.get("ok"):
+            print(f"{idx}) {name}（{c.upper()}）：{d.get('error', '诊断不可用')}")
+            continue
+
+        pos = _price_position_text(d.get("last_price"), d.get("ma5"), d.get("ma10"), d.get("ma20"))
+        ll, bull, rev = d.get("candle_flags", (False, False, False))
+        tag = d.get("tag_same") if not d.get("is_close") else d.get("tag_full")
+        reasons = d.get("reasons_same") if not d.get("is_close") else d.get("reasons_full")
+
+        print(f"{idx}) {name}（{c.upper()}）")
+        print(f"   - 点位：{_fmt(d.get('last_price'))}（涨跌幅：{_pct_text(d.get('pct'))}，点位源：{d.get('quote_source_label')}）")
+        print(f"   - 金额：当前/全日={readable_billion_from_yuan(d.get('amt_full_today'))}；同刻={readable_billion_from_yuan(d.get('same_today_show'))}（{d.get('now_hhmm') or '-'}，金额源：{d.get('amount_source_label')}）")
+        print(f"   - 同刻量能：前5日={fmt_ratio(d.get('r5_same_show'))}，前20日={fmt_ratio(d.get('r20_same_show'))}，昨日={fmt_ratio(d.get('ratio_yday_show'))}，近3日={fmt_ratio(d.get('ratio_3_show'))}；有效样本={d.get('n_hist_days')}天")
+        print(f"   - 全日量能：前5日={fmt_ratio(d.get('r5_full'))}，前20日={fmt_ratio(d.get('r20_full'))}")
+        print(f"   - 技术：MA5={_fmt(d.get('ma5'))}，MA10={_fmt(d.get('ma10'))}，MA20={_fmt(d.get('ma20'))}；{pos}")
+        if isinstance(d.get("support"), (int, float)) and isinstance(d.get("resistance"), (int, float)) and math.isfinite(d.get("support")) and math.isfinite(d.get("resistance")):
+            print(f"   - 近20日支撑/压力：{d.get('support'):.2f} / {d.get('resistance'):.2f}；K线：长下影={'是' if ll else '否'}，大阳线={'是' if bull else '否'}，止跌回升={'是' if rev else '否'}")
+        print(f"   - 单指数结论：{tag}")
+        if reasons:
+            print(f"     依据：{'；'.join(reasons[:4])}")
+
+
+def _classify_market_volume(*ratios: Optional[float]) -> Tuple[str, str]:
+    vals = [v for v in ratios if isinstance(v, (int, float)) and math.isfinite(v) and v > 0]
+    if not vals:
+        return "unknown", "量能样本不足"
+    cnt_ge_115 = sum(1 for v in vals if v >= 1.15)
+    cnt_ge_110 = sum(1 for v in vals if v >= 1.10)
+    any_ge_130 = any(v >= 1.30 for v in vals)
+    any_ge_105 = any(v >= 1.05 for v in vals)
+    any_ge_095 = any(v >= 0.95 for v in vals)
+    if any_ge_130 or cnt_ge_115 >= 2 or cnt_ge_110 >= 2:
+        return "strong", "两市量能明显放大"
+    if any_ge_105:
+        return "mild", "两市量能略强"
+    if any_ge_095:
+        return "flat", "两市量能基本持平"
+    return "weak", "两市量能偏弱"
+
+
+def _index_direction_state(diag_map: Dict[str, dict]) -> dict:
+    pcts = []
+    for c in INDEX_CODES:
+        d = diag_map.get(c, {})
+        p = d.get("pct")
+        if isinstance(p, (int, float)) and math.isfinite(p):
+            pcts.append((c, p))
+    up = [c for c, p in pcts if p > 0]
+    down = [c for c, p in pcts if p < 0]
+    flat = [c for c, p in pcts if p == 0]
+    return {"pcts": dict(pcts), "up": up, "down": down, "flat": flat}
+
+
+def build_market_overall_diag(diag_map: Dict[str, dict]) -> dict:
+    # 最终综合行情判断：两市成交额 proxy + 三大指数状态。
+    sh = diag_map.get("sh000001", {})
+    sz = diag_map.get("sz399001", {})
+
+    same_today = _sum_or_none([sh.get("same_today_show"), sz.get("same_today_show")])
+    avg5_same = _sum_or_none([sh.get("avg5_same_show"), sz.get("avg5_same_show")])
+    avg20_same = _sum_or_none([sh.get("avg20_same_show"), sz.get("avg20_same_show")])
+    yday_same = _sum_or_none([sh.get("yday_same_show"), sz.get("yday_same_show")])
+    mean3_same = _sum_or_none([sh.get("mean_3_same_show"), sz.get("mean_3_same_show")])
+
+    amt_full_today = _sum_or_none([sh.get("amt_full_today"), sz.get("amt_full_today")])
+    avg5_full = _sum_or_none([sh.get("avg5_full"), sz.get("avg5_full")])
+    avg20_full = _sum_or_none([sh.get("avg20_full"), sz.get("avg20_full")])
+
+    r5_same = _ratio_or_none(same_today, avg5_same)
+    r20_same = _ratio_or_none(same_today, avg20_same)
+    r_yday = _ratio_or_none(same_today, yday_same)
+    r_3 = _ratio_or_none(same_today, mean3_same)
+    r5_full = _ratio_or_none(amt_full_today, avg5_full)
+    r20_full = _ratio_or_none(amt_full_today, avg20_full)
+
+    volume_state, volume_text = _classify_market_volume(r5_same, r20_same, r_yday, r_3)
+    index_state = _index_direction_state(diag_map)
+    up_count = len(index_state["up"])
+    down_count = len(index_state["down"])
+    pcts = index_state["pcts"]
+
+    sh_pct = pcts.get("sh000001")
+    sz_pct = pcts.get("sz399001")
+    cy_pct = pcts.get("sz399006")
+
+    structure = "指数结构分化不明显"
+    if up_count == 3:
+        structure = "三大指数共振上涨"
+    elif down_count == 3:
+        structure = "三大指数共振下跌"
+    elif isinstance(cy_pct, (int, float)) and isinstance(sh_pct, (int, float)) and cy_pct > 0 and (cy_pct - sh_pct) >= 0.8:
+        structure = "创业板明显强于上证，成长线相对占优"
+    elif isinstance(sh_pct, (int, float)) and isinstance(cy_pct, (int, float)) and sh_pct > 0 and (sh_pct - cy_pct) >= 0.8:
+        structure = "上证明显强于创业板，权重/主板相对占优"
+    elif isinstance(sh_pct, (int, float)) and isinstance(sz_pct, (int, float)) and isinstance(cy_pct, (int, float)):
+        if sh_pct >= 0 and sz_pct < 0 and cy_pct < 0:
+            structure = "上证相对抗跌，存在权重护盘特征"
+        elif sh_pct < 0 and sz_pct >= 0 and cy_pct >= 0:
+            structure = "深市和创业板强于主板，成长线相对占优"
+        elif up_count >= 2:
+            structure = "多数指数上涨，但仍有分化"
+        elif down_count >= 2:
+            structure = "多数指数走弱，市场风险偏好偏弱"
+
+    if volume_state == "strong" and up_count >= 2:
+        final_tag = "✅ 放量共振走强"
+    elif volume_state == "strong" and up_count < 2:
+        final_tag = "⚠️ 两市量能明显改善，但指数尚未共振"
+    elif volume_state == "mild" and up_count >= 2:
+        if up_count == 3:
+            final_tag = "⚠️ 指数共振走强，但两市量能仅略强，仍需继续放量确认"
+        else:
+            final_tag = "⚠️ 指数多数上涨，但两市量能仅略强，仍需观察分化"
+    elif volume_state == "mild" and up_count < 2:
+        final_tag = "⚠️ 两市量能略强，但指数尚未形成共振"
+    elif volume_state == "flat" and up_count >= 2:
+        final_tag = "⚠️ 指数多数上涨，但量能基本持平，持续性待确认"
+    elif volume_state == "weak" and up_count >= 2:
+        final_tag = "⚠️ 缩量反弹，持续性待确认"
+    elif volume_state == "weak" and down_count >= 2:
+        final_tag = "❌ 缩量走弱，市场仍偏防守"
+    elif down_count >= 2:
+        final_tag = "❌ 指数多数走弱，综合行情偏弱"
+    else:
+        final_tag = "⚠️ 量能和指数方向暂不统一，方向未明"
+
+    return {
+        "same_today": same_today,
+        "avg5_same": avg5_same,
+        "avg20_same": avg20_same,
+        "yday_same": yday_same,
+        "mean3_same": mean3_same,
+        "r5_same": r5_same,
+        "r20_same": r20_same,
+        "r_yday": r_yday,
+        "r_3": r_3,
+        "amt_full_today": amt_full_today,
+        "avg5_full": avg5_full,
+        "avg20_full": avg20_full,
+        "r5_full": r5_full,
+        "r20_full": r20_full,
+        "volume_state": volume_state,
+        "volume_text": volume_text,
+        "index_state": index_state,
+        "structure": structure,
+        "final_tag": final_tag,
+        "now_hhmm": sh.get("now_hhmm") or sz.get("now_hhmm"),
+        "amount_source": f"{sh.get('amount_source_label', '未知')} + {sz.get('amount_source_label', '未知')}",
+    }
+
+
+def print_market_overall_diagnostic(diag_map: Dict[str, dict]) -> None:
+    # 打印最终综合行情判断。
+    d = build_market_overall_diag(diag_map)
+    pcts = d.get("index_state", {}).get("pcts", {})
+
+    print("\n🧩 最终综合行情判断（两市成交额 proxy + 三大指数）")
+    print("- 量能口径：两市成交额 proxy = 上证指数成交额 + 深证成指成交额；创业板不重复并入，只做结构参考。")
+    print(f"- 金额来源：{d.get('amount_source')}；同刻时点：{d.get('now_hhmm') or '-'}")
+    print(f"- 两市当前成交额 proxy：{readable_billion_from_yuan(d.get('amt_full_today'))}")
+    print(f"- 两市同刻累计 proxy：{readable_billion_from_yuan(d.get('same_today'))}")
+    print(f"  · 对比近5日同刻：{fmt_ratio(d.get('r5_same'))}；对比近20日同刻：{fmt_ratio(d.get('r20_same'))}")
+    print(f"  · 对比昨日同刻：{fmt_ratio(d.get('r_yday'))}；对比近3日同刻：{fmt_ratio(d.get('r_3'))}")
+    print(f"- 三大指数涨跌：上证={_pct_text(pcts.get('sh000001'))}，深成指={_pct_text(pcts.get('sz399001'))}，创业板={_pct_text(pcts.get('sz399006'))}")
+    print(f"- 量能判断：{d.get('volume_text')}；指数结构：{d.get('structure')}")
+    print(f"- 最终判断：{d.get('final_tag')}")
+
 def quick_summary_and_diag():
     print(">>> 启动 A 股快讯 & 诊断（pytdx 历史 + Wind主源/QQ兜底 + 分析模块）")
 
@@ -1863,6 +2294,9 @@ def quick_summary_and_diag():
     print_quick_summary(data_map, today_patch_map, meta_map)
 
     print_northbound_placeholder()
+
+    index_diag_map = build_index_deep_diag_map(data_map)
+    print_three_index_deep_diagnostics(index_diag_map)
 
     # —— 主诊断
     df_main = data_map[MAIN_CODE]
@@ -2053,6 +2487,8 @@ def quick_summary_and_diag():
         tag_full,
         reasons_full
     )
+
+    print_market_overall_diagnostic(index_diag_map)
 
 
 def main():
