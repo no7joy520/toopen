@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 """
 a_sh_query_web.py — 最终整合版（s_ 同步点位+涨跌幅+当日金额 · 覆盖即用 · 含当日口径校准因子k）
@@ -57,6 +57,19 @@ WINDOW_DAYS = 5
 CACHE_DIR   = "cache/minutes"
 TIMEOUT_SEC = 2.5
 CACHE_WRITE_COOLDOWN = int(os.environ.get("CACHE_WRITE_COOLDOWN", "60"))
+
+# ====== 结构化报告输出（供静态 HTML / 后续 Web 服务使用）======
+# 默认每次运行覆盖写出到项目根目录；如需改路径，可设置 REPORT_JSON_PATH。
+REPORT_JSON_PATH = os.environ.get("REPORT_JSON_PATH", "market_dashboard_data.json")
+CHART_LOOKBACK_DAYS = int(os.environ.get("CHART_LOOKBACK_DAYS", "20"))
+
+# ====== 北向资金结构化输出配置 ======
+# 第一版只写入 JSON，不改变原控制台输出；抓取失败时 northbound.available=false。
+NORTHBOUND_LOOKBACK_DAYS = int(os.environ.get("NORTHBOUND_LOOKBACK_DAYS", str(CHART_LOOKBACK_DAYS)))
+NORTHBOUND_ENABLE = os.environ.get("NORTHBOUND_ENABLE", "1") != "0"
+NORTHBOUND_TIMEOUT_SEC = float(os.environ.get("NORTHBOUND_TIMEOUT_SEC", "8"))
+NORTHBOUND_CACHE_CSV = os.environ.get("NORTHBOUND_CACHE_CSV", os.path.join("cache", "northbound_daily.csv"))
+DEBUG_NORTHBOUND_LOG = os.environ.get("DEBUG_NORTHBOUND_LOG", "0") == "1"
 
 # ====== Wind MCP 主源配置（新增，失败自动回落原免费源）======
 # USE_WIND=0 可临时关闭 Wind 主源，回到原腾讯/QQ/TDX 逻辑
@@ -2286,6 +2299,902 @@ def print_market_overall_diagnostic(diag_map: Dict[str, dict]) -> None:
     print(f"- 量能判断：{d.get('volume_text')}；指数结构：{d.get('structure')}")
     print(f"- 最终判断：{d.get('final_tag')}")
 
+
+# ====== 结构化报告：输出给前端 dashboard JSON ======
+
+def _json_number(v, digits=2):
+    # 将 pandas/numpy/float 等安全转成 JSON 数值；无效值返回 None。
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
+    if isinstance(v, (int, float)) and math.isfinite(v):
+        return round(float(v), digits)
+    try:
+        fv = float(v)
+        if math.isfinite(fv):
+            return round(fv, digits)
+    except Exception:
+        pass
+    return None
+
+
+def _json_clean(obj):
+    # 递归清洗，避免 pandas.Timestamp / NaN / numpy scalar 导致 json.dump 失败。
+    if isinstance(obj, dict):
+        return {str(k): _json_clean(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_clean(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_json_clean(v) for v in obj]
+    if isinstance(obj, pd.Timestamp):
+        return obj.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        if pd.isna(obj):
+            return None
+    except Exception:
+        pass
+    if isinstance(obj, (int, float)):
+        return obj if math.isfinite(float(obj)) else None
+    return obj
+
+
+def _amount_yuan_to_billion(v, digits=2):
+    n = _json_number(v, digits=6)
+    if n is None:
+        return None
+    return round(float(n) / 1e8, digits)
+
+
+def _chart_point_label(is_today_point: bool, is_partial: bool, hhmm: Optional[str]) -> str:
+    if is_today_point and is_partial:
+        return f"今日{hhmm or '-'}同刻"
+    if is_today_point:
+        return "今日收盘"
+    return "全天"
+
+
+def build_index_chart_series(code: str,
+                             df_all: pd.DataFrame,
+                             diag: dict,
+                             lookback_days: int = CHART_LOOKBACK_DAYS) -> List[dict]:
+    # 构造单指数最近 N 个交易日图表序列。
+    # 历史日：全天收盘价 / 全天成交额
+    # 今日盘中：当前点位 / 同刻累计成交额
+    # 今日盘后：收盘点位 / 全天成交额
+    if df_all is None or df_all.empty or not diag or not diag.get("ok"):
+        return []
+
+    dft = filter_cn_trading_minutes(df_all)
+    if dft.empty:
+        return []
+
+    daily = minutes_to_daily(dft)
+    daily = _ensure_daily_schema(daily if not daily.empty else pd.DataFrame(columns=["date", "amount", "close"]))
+    daily = daily.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    if daily.empty:
+        return []
+
+    same_ref_day = diag.get("same_ref_day") or diag.get("latest_day") or today_str_cst()
+    now_hhmm = diag.get("now_hhmm") or "15:00"
+    is_partial = bool(diag.get("is_today")) and (not bool(diag.get("is_close")))
+
+    rows = []
+    for _, row in daily.iterrows():
+        day_str = pd.to_datetime(row.get("date"), errors="coerce")
+        if pd.isna(day_str):
+            continue
+        date_s = day_str.strftime("%Y-%m-%d")
+        is_ref_day = (date_s == same_ref_day)
+        is_today_point = (date_s == today_str_cst()) and is_ref_day
+
+        if is_ref_day:
+            price = diag.get("last_price")
+            if price is None:
+                price = row.get("close")
+            amt_billion = _amount_yuan_to_billion(diag.get("same_today_show") if is_partial else diag.get("amt_full_today"))
+            if amt_billion is None:
+                amt_billion = _amount_yuan_to_billion(row.get("amount"))
+            label = _chart_point_label(is_today_point, is_partial, now_hhmm)
+        else:
+            price = row.get("close")
+            amt_billion = _amount_yuan_to_billion(row.get("amount"))
+            label = "全天"
+
+        rows.append({
+            "date": date_s,
+            "label": label,
+            "price": _json_number(price, 2),
+            "amountBillion": amt_billion,
+            "isToday": bool(is_today_point),
+            "isPartial": bool(is_today_point and is_partial),
+        })
+
+    # 如果今日/当前参考日不在日线里，补一个当前点。
+    if same_ref_day and not any(p["date"] == same_ref_day for p in rows):
+        rows.append({
+            "date": str(same_ref_day),
+            "label": _chart_point_label(str(same_ref_day) == today_str_cst(), is_partial, now_hhmm),
+            "price": _json_number(diag.get("last_price"), 2),
+            "amountBillion": _amount_yuan_to_billion(diag.get("same_today_show") if is_partial else diag.get("amt_full_today")),
+            "isToday": str(same_ref_day) == today_str_cst(),
+            "isPartial": bool(str(same_ref_day) == today_str_cst() and is_partial),
+        })
+
+    rows = sorted(rows, key=lambda x: x.get("date") or "")[-max(1, int(lookback_days)):]
+    return rows
+
+
+def build_market_proxy_chart_series(index_reports: List[dict],
+                                    lookback_days: int = CHART_LOOKBACK_DAYS) -> List[dict]:
+    # 两市成交额 proxy 曲线：上证指数成交额 + 深证成指成交额。
+    by_code = {x.get("code"): x for x in index_reports}
+    sh_points = by_code.get("sh000001", {}).get("chartPoints") or []
+    sz_points = by_code.get("sz399001", {}).get("chartPoints") or []
+
+    sh_map = {p.get("date"): p for p in sh_points if p.get("date")}
+    sz_map = {p.get("date"): p for p in sz_points if p.get("date")}
+    common_days = sorted(set(sh_map.keys()) & set(sz_map.keys()))
+
+    out = []
+    for day in common_days:
+        a = sh_map[day].get("amountBillion")
+        b = sz_map[day].get("amountBillion")
+        if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+            continue
+        is_today = bool(sh_map[day].get("isToday") or sz_map[day].get("isToday"))
+        is_partial = bool(sh_map[day].get("isPartial") or sz_map[day].get("isPartial"))
+        out.append({
+            "date": day,
+            "label": sh_map[day].get("label") or sz_map[day].get("label") or ("今日同刻" if is_partial else "全天"),
+            "amountBillion": round(float(a) + float(b), 2),
+            "isToday": is_today,
+            "isPartial": is_partial,
+        })
+
+    return out[-max(1, int(lookback_days)):]
+
+
+def _candle_text(flags) -> str:
+    try:
+        ll, bull, rev = flags
+    except Exception:
+        ll = bull = rev = False
+    return f"长下影={'是' if ll else '否'}，大阳线={'是' if bull else '否'}，止跌回升={'是' if rev else '否'}"
+
+
+def _volume_tag_from_diag(d: dict) -> str:
+    tag = d.get("tag_full") if d.get("is_close") else d.get("tag_same")
+    if not isinstance(tag, str):
+        return "量能状态未知"
+    if "明显放量" in tag or "放量企稳" in tag:
+        return "明显放量"
+    if "略强" in tag:
+        return "量能略强"
+    if "基本持平" in tag:
+        return "量能基本持平"
+    if "尚未企稳" in tag:
+        return "量能偏弱"
+    return tag.replace("✅", "").replace("⚠️", "").replace("❌", "").strip()
+
+
+
+# ====== 北向资金：东方财富历史数据 -> JSON 图表结构 ======
+
+def _northbound_empty_report(note: str,
+                             source: str = "东方财富",
+                             error: Optional[str] = None) -> dict:
+    # 北向资金失败时的统一降级结构；不影响主诊断流程。
+    out = {
+        "available": False,
+        "source": source,
+        "asOf": None,
+        "note": note,
+        "netBuySeries": [],
+        "netBuyPoints": [],
+        "cumulativeSeries": [],
+        "sum5Billion": None,
+        "sum20Billion": None,
+        "lastNetBuyBillion": None,
+    }
+    if error:
+        out["error"] = str(error)[:300]
+    return out
+
+
+def _nb_to_float(x):
+    if x is None:
+        return None
+    try:
+        if isinstance(x, str):
+            s = x.strip().replace(",", "")
+            if not s or s in {"-", "--", "null", "None", "NaN"}:
+                return None
+            s = s.replace("亿元", "").replace("亿", "").replace("万元", "")
+            v = float(s)
+        else:
+            v = float(x)
+        return v if math.isfinite(v) else None
+    except Exception:
+        return None
+
+
+def _nb_normalize_to_billion(v: Optional[float]) -> Optional[float]:
+    # 保留旧工具函数，主要用于兼容缓存/兜底；真实东方财富接口取数不再逐条猜单位，
+    # 而是在 _fetch_northbound_from_eastmoney_datacenter() 中按整批数据统一推断单位。
+    if v is None or not isinstance(v, (int, float)) or not math.isfinite(v):
+        return None
+
+    fv = float(v)
+    av = abs(fv)
+
+    if av >= 1e10:       # 元 -> 亿元
+        return round(fv / 1e8, 2)
+    if av >= 1e5:        # 万元 -> 亿元
+        return round(fv / 1e4, 2)
+    if av >= 500:        # RMB million / 百万元 -> 亿元
+        return round(fv / 100.0, 2)
+
+    return round(fv, 2)
+
+
+def _nb_infer_scale_to_billion(raw_values: List[float]) -> float:
+    # 北向资金同一个接口、同一个字段的单位应该是一致的，不能逐条按大小猜。
+    # 本函数按整批 raw_values 推断“转亿元”的缩放系数。
+    vals = [abs(float(v)) for v in raw_values if isinstance(v, (int, float)) and math.isfinite(v) and abs(float(v)) > 0]
+    if not vals:
+        return 1.0
+
+    vals_sorted = sorted(vals)
+    mid = vals_sorted[len(vals_sorted) // 2]
+    mx = max(vals_sorted)
+
+    # 元级字段：数值通常巨大。
+    if mid >= 1e10 or mx >= 1e11:
+        return 1e-8
+
+    # 万元字段：净买额原始值可能是几十万、几百万。
+    if mid >= 1e5 or mx >= 1e6:
+        return 1e-4
+
+    # 东方财富/港交所历史日度口径常见为 RMB million（百万元）。
+    # 例如 2869.79 实际应为 28.70 亿元；同一批里的 205.64 也应统一转为 2.06 亿元，
+    # 不能因为它小于 500 就当成 205.64 亿元。
+    if mid >= 500 or mx >= 1000:
+        return 0.01
+
+    # 已经是亿元。
+    return 1.0
+
+def _nb_parse_date(x) -> Optional[str]:
+    if x is None:
+        return None
+    try:
+        ts = pd.to_datetime(str(x).strip(), errors="coerce")
+        if pd.isna(ts):
+            return None
+        return ts.strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _nb_pick_date(row: dict) -> Optional[str]:
+    for k in ["TRADE_DATE", "date", "日期", "REPORT_DATE", "CAL_DATE", "f51"]:
+        if k in row:
+            d = _nb_parse_date(row.get(k))
+            if d:
+                return d
+    for k, v in row.items():
+        ku = str(k).upper()
+        if "DATE" in ku or "日期" in str(k):
+            d = _nb_parse_date(v)
+            if d:
+                return d
+    return None
+
+
+def _nb_pick_net_buy(row: dict) -> Optional[float]:
+    # 优先选择“成交净买额/净买额”，不要误拿“成交总额”。
+    # 这里返回原始数值，不在单条记录里猜单位；单位统一在整批数据层面推断。
+    exact_keys = [
+        "当日成交净买额", "成交净买额", "当日净买额", "净买额",
+        "NET_BUY_AMT", "NETBUYAMT", "NET_BUY_AMOUNT",
+        "NET_DEAL_AMT", "NETDEALAMT", "NET_DEAL_AMOUNT",
+        "BUY_SELL_DIFF", "BUYSELLDIFF", "NET_AMT", "NETAMT",
+    ]
+    for k in exact_keys:
+        if k in row:
+            v = _nb_to_float(row.get(k))
+            if v is not None:
+                return v
+
+    # 模糊兜底：字段名必须同时表达“净”和“金额/成交/买”。
+    for k, raw in row.items():
+        ks = str(k)
+        ku = ks.upper()
+        if any(bad in ks for bad in ["累计", "历史累计", "成交总额", "买入成交额", "卖出成交额", "持股市值"]):
+            continue
+        looks_net = ("净" in ks) or ("NET" in ku)
+        looks_money = any(x in ks for x in ["买额", "金额", "成交"]) or any(x in ku for x in ["AMT", "AMOUNT", "DEAL"] )
+        if looks_net and looks_money:
+            v = _nb_to_float(raw)
+            if v is not None:
+                return v
+    return None
+
+def _nb_eastmoney_param_candidates(page_size: int) -> List[dict]:
+    # 多组东方财富参数候选。第一组是当前主口径；后两组用于上游字段/筛选变化时兜底。
+    base = {
+        "reportName": "RPT_MUTUAL_DEAL_HISTORY",
+        "columns": "ALL",
+        "pageSize": str(page_size),
+        "sortColumns": "TRADE_DATE",
+        "sortTypes": "-1",
+        "source": "WEB",
+        "client": "WEB",
+    }
+    candidates = []
+    for flt in [
+        '(MUTUAL_TYPE="001")',          # 北向资金/沪深股通合计主口径
+        '(MUTUAL_TYPE="北向资金")',     # 中文口径兜底
+        None,                           # 不带筛选兜底，后续按字段解析有效净买额
+    ]:
+        item = dict(base)
+        if flt:
+            item["filter"] = flt
+        candidates.append(item)
+    return candidates
+
+
+def _nb_parse_eastmoney_rows_to_points(rows: List[dict]) -> Tuple[List[dict], float]:
+    # 先取整批原始值，再统一推断单位，避免 205.64 这种小值被逐条误判为亿元。
+    raw_points = []
+    raw_values = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        date_s = _nb_pick_date(row)
+        raw_net = _nb_pick_net_buy(row)
+        if not date_s or raw_net is None:
+            continue
+        raw_points.append({
+            "date": date_s,
+            "label": "已完成交易日",
+            "rawNetBuy": float(raw_net),
+            "source": "东方财富",
+        })
+        raw_values.append(float(raw_net))
+
+    scale = _nb_infer_scale_to_billion(raw_values)
+    points = []
+    for p in raw_points:
+        points.append({
+            "date": p["date"],
+            "label": p["label"],
+            "netBuyBillion": round(float(p["rawNetBuy"]) * scale, 2),
+            "source": p["source"],
+        })
+    return points, scale
+
+
+def _fetch_northbound_from_eastmoney_datacenter(page_size: int = 120,
+                                                target_days: int = NORTHBOUND_LOOKBACK_DAYS,
+                                                max_pages: int = 5) -> Tuple[List[dict], Optional[str]]:
+    # 东方财富-沪深港通历史数据。
+    # 增强版：不足 target_days 时继续翻页，并尝试多组兜底参数；最后按日期去重合并。
+    url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+    headers = {
+        "User-Agent": random.choice(UA_POOL),
+        "Referer": "https://data.eastmoney.com/hsgt/index.html",
+        "Accept": "application/json,text/plain,*/*",
+    }
+
+    need_days = max(1, int(target_days or NORTHBOUND_LOOKBACK_DAYS))
+    max_pages = max(1, int(max_pages or 1))
+    page_size = max(20, int(page_size or 80))
+
+    merged_points = []
+    last_error = None
+    debug_lines = []
+
+    for base_params in _nb_eastmoney_param_candidates(page_size):
+        candidate_points = []
+
+        for page_no in range(1, max_pages + 1):
+            params = dict(base_params)
+            params["pageNumber"] = str(page_no)
+
+            try:
+                r = requests.get(url, params=params, headers=headers, timeout=NORTHBOUND_TIMEOUT_SEC)
+                if r.status_code != 200 or not r.text:
+                    last_error = f"HTTP {r.status_code}"
+                    break
+
+                js = r.json()
+                result = js.get("result") if isinstance(js, dict) else None
+                rows = result.get("data") if isinstance(result, dict) else None
+                if not isinstance(rows, list) or not rows:
+                    last_error = "empty data"
+                    break
+
+                points, scale = _nb_parse_eastmoney_rows_to_points(rows)
+                candidate_points.extend(points)
+                candidate_points = _dedupe_sort_points_by_date(candidate_points)
+
+                if DEBUG_NORTHBOUND_LOG:
+                    debug_lines.append(
+                        f"params_filter={params.get('filter', 'NO_FILTER')}; page={page_no}; "
+                        f"rows={len(rows)}; page_points={len(points)}; merged_candidate={len(candidate_points)}; "
+                        f"unit_scale={scale}; sample_keys={list(rows[0].keys())[:20] if rows else []}"
+                    )
+
+                # 如果这一组参数已经足够，就无需继续翻这一组的更老页面。
+                if len(candidate_points) >= need_days:
+                    break
+
+                # 如果本页数据少于 page_size，大概率没有下一页了。
+                if len(rows) < page_size:
+                    break
+
+            except Exception as e:
+                last_error = repr(e)
+                break
+
+        if candidate_points:
+            # 多候选参数合并；后拿到的新数据会按日期覆盖旧数据。
+            merged_points = _dedupe_sort_points_by_date(merged_points + candidate_points)
+
+        # 已补足目标天数就停止尝试后续参数，减少不必要请求。
+        if len(merged_points) >= need_days:
+            break
+
+    if DEBUG_NORTHBOUND_LOG:
+        for line in debug_lines:
+            print(f"[northbound.debug] {line}")
+        print(f"[northbound.debug] final_online_points={len(merged_points)}; need_days={need_days}; last_error={last_error}")
+
+    return merged_points, last_error
+
+def _dedupe_sort_points_by_date(points: List[dict]) -> List[dict]:
+    mp = {}
+    for p in points or []:
+        d = _nb_parse_date(p.get("date"))
+        v = _nb_to_float(p.get("netBuyBillion"))
+        if not d or v is None:
+            continue
+        mp[d] = {
+            "date": d,
+            "label": p.get("label") or "已完成交易日",
+            "netBuyBillion": round(float(v), 2),
+            "source": p.get("source") or "未知来源",
+        }
+    return [mp[k] for k in sorted(mp.keys())]
+
+
+def _save_northbound_cache_points(points: List[dict]) -> None:
+    pts = _dedupe_sort_points_by_date(points)
+    if not pts:
+        return
+    folder = os.path.dirname(os.path.abspath(NORTHBOUND_CACHE_CSV))
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    df = pd.DataFrame(pts)
+    tmp = NORTHBOUND_CACHE_CSV + f".tmp_{os.getpid()}_{int(time.time() * 1000)}"
+    df.to_csv(tmp, index=False, encoding="utf-8-sig")
+    os.replace(tmp, NORTHBOUND_CACHE_CSV)
+
+
+def _load_northbound_cache_points() -> List[dict]:
+    if not os.path.exists(NORTHBOUND_CACHE_CSV):
+        return []
+    try:
+        df = pd.read_csv(NORTHBOUND_CACHE_CSV, encoding="utf-8-sig")
+    except Exception:
+        try:
+            df = pd.read_csv(NORTHBOUND_CACHE_CSV)
+        except Exception:
+            return []
+    if df.empty:
+        return []
+    points = []
+    for _, row in df.iterrows():
+        points.append({
+            "date": row.get("date"),
+            "label": row.get("label") if "label" in df.columns else "本地缓存",
+            "netBuyBillion": row.get("netBuyBillion"),
+            "source": row.get("source") if "source" in df.columns else "本地缓存",
+        })
+    return _dedupe_sort_points_by_date(points)
+
+
+def _northbound_short_term_tag(sum5: Optional[float]) -> str:
+    if not isinstance(sum5, (int, float)) or not math.isfinite(sum5):
+        return "短期北向状态未知"
+    if sum5 > 50:
+        return "短期偏流入"
+    if sum5 < -50:
+        return "短期偏流出"
+    return "短期中性"
+
+
+def _northbound_window_tag(sum_window: Optional[float]) -> str:
+    if not isinstance(sum_window, (int, float)) or not math.isfinite(sum_window):
+        return "阶段性北向状态未知"
+    if sum_window > 100:
+        return "阶段性净流入明显"
+    if sum_window < -100:
+        return "阶段性净流出明显"
+    return "阶段性中性"
+
+
+def _northbound_z_tag(z: Optional[float]) -> str:
+    if not isinstance(z, (int, float)) or not math.isfinite(z):
+        return "最新日偏离不可判定"
+    if z >= 1.5:
+        return "最新日异常偏流入"
+    if z >= 0.5:
+        return "最新日明显偏流入"
+    if z <= -1.5:
+        return "最新日异常偏流出"
+    if z <= -0.5:
+        return "最新日明显偏流出"
+    return "最新日处于正常波动"
+
+
+def _northbound_confirm_tag(sum5: Optional[float], sum_window: Optional[float], z: Optional[float]) -> str:
+    # 北向资金只作为辅助确认因子，不作为主行情硬判定。
+    short_neg = isinstance(sum5, (int, float)) and math.isfinite(sum5) and sum5 < -50
+    short_pos = isinstance(sum5, (int, float)) and math.isfinite(sum5) and sum5 > 50
+    window_neg = isinstance(sum_window, (int, float)) and math.isfinite(sum_window) and sum_window < -100
+    window_pos = isinstance(sum_window, (int, float)) and math.isfinite(sum_window) and sum_window > 100
+    z_neg = isinstance(z, (int, float)) and math.isfinite(z) and z <= -0.5
+    z_pos = isinstance(z, (int, float)) and math.isfinite(z) and z >= 0.5
+
+    if (short_neg and window_neg) or (short_neg and z_neg) or (window_neg and z_neg):
+        return "北向确认偏负面"
+    if (short_pos and window_pos) or (short_pos and z_pos) or (window_pos and z_pos):
+        return "北向确认偏正面"
+    if (short_neg or window_neg or z_neg) and (short_pos or window_pos or z_pos):
+        return "北向资金存在分歧"
+    return "北向确认中性"
+
+
+def _northbound_explain(sum5: Optional[float],
+                        sum_window: Optional[float],
+                        actual_days: int,
+                        mean_val: Optional[float],
+                        z: Optional[float],
+                        confirm_tag: str) -> str:
+    parts = []
+    if isinstance(sum5, (int, float)) and math.isfinite(sum5):
+        parts.append(f"近5日净{'流入' if sum5 >= 0 else '流出'}{abs(sum5):.2f}亿")
+    if isinstance(sum_window, (int, float)) and math.isfinite(sum_window):
+        parts.append(f"近{actual_days}个交易日累计净{'流入' if sum_window >= 0 else '流出'}{abs(sum_window):.2f}亿")
+    if isinstance(mean_val, (int, float)) and math.isfinite(mean_val):
+        parts.append(f"窗口内日均{mean_val:.2f}亿")
+    if isinstance(z, (int, float)) and math.isfinite(z):
+        parts.append(f"最新日偏离z={z:.2f}")
+
+    prefix = "；".join(parts) if parts else "北向资金样本不足"
+    if "偏负面" in confirm_tag:
+        return f"{prefix}，外部资金确认度偏弱。"
+    if "偏正面" in confirm_tag:
+        return f"{prefix}，外部资金确认度偏强。"
+    if "分歧" in confirm_tag:
+        return f"{prefix}，北向资金信号存在分歧。"
+    return f"{prefix}，北向资金整体偏中性。"
+
+
+def _build_northbound_report_from_points(points: List[dict],
+                                         source: str,
+                                         lookback_days: int,
+                                         note: str) -> dict:
+    requested_days = max(1, int(lookback_days or NORTHBOUND_LOOKBACK_DAYS))
+    all_pts = _dedupe_sort_points_by_date(points)
+    pts = all_pts[-requested_days:]
+    if not pts:
+        return _northbound_empty_report(note=note, source=source)
+
+    cumulative = []
+    s = 0.0
+    for p in pts:
+        v = float(p["netBuyBillion"])
+        s += v
+        p["label"] = p.get("label") or "已完成交易日"
+        p["isPositive"] = v >= 0
+        p["cumulativeBillion"] = round(s, 2)
+        cumulative.append(round(s, 2))
+
+    net_series = [p["netBuyBillion"] for p in pts]
+    actual_days = len(pts)
+    is_complete = actual_days >= requested_days
+    title = f"北向资金最近{actual_days}个可用交易日" if not is_complete else f"北向资金最近{requested_days}个交易日"
+
+    if not is_complete:
+        note = f"{note} 当前仅取得 {actual_days}/{requested_days} 个可用交易日，前端应按实际条数展示。"
+
+    sum5 = round(sum(net_series[-5:]), 2) if net_series else None
+    sum_window = round(sum(net_series), 2) if net_series else None
+    last_net = net_series[-1] if net_series else None
+
+    mean_val = None
+    std_val = None
+    z_latest = None
+    if net_series:
+        mean_val = round(sum(net_series) / len(net_series), 2)
+        if len(net_series) >= 2:
+            # 用总体标准差做“窗口内偏离”衡量，避免样本标准差在短窗口下偏大。
+            mean_raw = sum(net_series) / len(net_series)
+            var = sum((x - mean_raw) ** 2 for x in net_series) / len(net_series)
+            std_raw = math.sqrt(var) if var >= 0 else None
+            if std_raw is not None and math.isfinite(std_raw):
+                std_val = round(std_raw, 2)
+                if std_raw > 0 and isinstance(last_net, (int, float)) and math.isfinite(last_net):
+                    z_latest = round((last_net - mean_raw) / std_raw, 2)
+
+    short_tag = _northbound_short_term_tag(sum5)
+    window_tag = _northbound_window_tag(sum_window)
+    z_tag = _northbound_z_tag(z_latest)
+    confirm_tag = _northbound_confirm_tag(sum5, sum_window, z_latest)
+    explain = _northbound_explain(sum5, sum_window, actual_days, mean_val, z_latest, confirm_tag)
+
+    return {
+        "available": True,
+        "source": source,
+        "asOf": pts[-1].get("date"),
+        "note": note,
+        "title": title,
+        "requestedLookbackDays": requested_days,
+        "actualDays": actual_days,
+        "isComplete": is_complete,
+        "role": "辅助确认因子",
+        "weightHint": "约20%，不改变指数结构和两市量能的主判断",
+        "netBuySeries": net_series,
+        "netBuyPoints": pts,
+        "cumulativeSeries": cumulative,
+        "sum5Billion": sum5,
+        # 保留原字段名，含义为“当前返回窗口内累计”；若 actualDays<20，前端看 actualDays/title。
+        "sum20Billion": sum_window,
+        "sumAvailableBillion": sum_window,
+        "lastNetBuyBillion": last_net,
+        "meanBillion": mean_val,
+        "stdBillion": std_val,
+        "zScoreLatest": z_latest,
+        "shortTermTag": short_tag,
+        "windowTag": window_tag,
+        "latestZTag": z_tag,
+        "confirmTag": confirm_tag,
+        "explain": explain,
+    }
+
+
+def fetch_northbound_flow_series_em(lookback_days: int = NORTHBOUND_LOOKBACK_DAYS) -> dict:
+    # 获取最近 N 个已完成交易日的北向资金净买额曲线。
+    # 增强版：在线不足 N 条时继续翻页/多参数，并与本地缓存合并；仍不足则如实返回实际条数。
+    if not NORTHBOUND_ENABLE:
+        return _northbound_empty_report("北向资金抓取已通过 NORTHBOUND_ENABLE=0 关闭。")
+
+    requested_days = max(1, int(lookback_days or NORTHBOUND_LOOKBACK_DAYS))
+
+    try:
+        online_points, err = _fetch_northbound_from_eastmoney_datacenter(
+            page_size=max(40, requested_days * 4),
+            target_days=requested_days,
+            max_pages=5,
+        )
+        online_points = _dedupe_sort_points_by_date(online_points)
+        cache_points = _load_northbound_cache_points()
+
+        # 缓存 + 在线合并：缓存补更早历史，在线覆盖同日期新数据。
+        merged_points = _dedupe_sort_points_by_date((cache_points or []) + (online_points or []))
+
+        if merged_points:
+            # 保存合并后的缓存，便于未来接口只给短窗口时继续补齐。
+            _save_northbound_cache_points(merged_points)
+            if online_points:
+                src = "东方财富"
+                note = "北向资金数据来自东方财富沪深港通历史数据；仅取已完成交易日，不含今日盘中。"
+                if cache_points and len(online_points) < requested_days and len(merged_points) > len(online_points):
+                    src = "东方财富 + 本地缓存"
+                    note = "东方财富本次返回交易日不足，已合并本地缓存补齐更早历史；不含今日盘中。"
+            else:
+                src = "本地缓存"
+                note = "东方财富北向资金接口本次未取到有效净买额，已回退使用本地缓存；不含今日盘中。"
+
+            return _build_northbound_report_from_points(
+                merged_points,
+                source=src,
+                lookback_days=requested_days,
+                note=note,
+            )
+
+        return _northbound_empty_report(
+            note="北向资金暂未取到有效历史净买额。可能是东方财富/港交所披露机制调整导致接口不再返回净买额；主行情诊断不受影响。",
+            source="东方财富",
+            error=err,
+        )
+    except Exception as e:
+        cache_points = _load_northbound_cache_points()
+        if cache_points:
+            return _build_northbound_report_from_points(
+                cache_points,
+                source="本地缓存",
+                lookback_days=requested_days,
+                note="北向资金在线抓取异常，已回退使用本地缓存；不含今日盘中。",
+            )
+        return _northbound_empty_report("北向资金抓取异常；主行情诊断不受影响。", error=repr(e))
+
+def _build_enhanced_decision_with_northbound(overall: dict, northbound_report: dict) -> str:
+    # 原 final_tag 仍是主判断；这里仅把北向资金作为辅助确认文案拼接进去。
+    base = (overall or {}).get("final_tag") or "综合判断暂不可用"
+    nb = northbound_report or {}
+    if not nb.get("available"):
+        return base
+
+    confirm_tag = nb.get("confirmTag") or "北向确认中性"
+    explain = nb.get("explain") or "北向资金样本不足。"
+    explain = str(explain).strip().rstrip("。")
+
+    if "偏负面" in confirm_tag:
+        return f"{base}；同时{explain}，当前上涨仍需继续放量和资金回流确认。"
+    if "偏正面" in confirm_tag:
+        return f"{base}；同时{explain}，对当前行情形成辅助正向确认。"
+    if "分歧" in confirm_tag:
+        return f"{base}；同时{explain}，资金面信号尚不统一。"
+    return f"{base}；同时{explain}。"
+
+
+def collect_report(data_map: Dict[str, pd.DataFrame],
+                   diag_map: Dict[str, dict],
+                   overall_diag: Optional[dict] = None,
+                   lookback_days: int = CHART_LOOKBACK_DAYS) -> dict:
+    # 统一收集前端 dashboard 所需数据。
+    # 控制台输出仍由原打印函数负责，这里只生成 JSON。
+    overall = overall_diag or build_market_overall_diag(diag_map)
+
+    main_diag = diag_map.get(MAIN_CODE, {}) or {}
+    as_of_date = main_diag.get("same_ref_day") or main_diag.get("latest_day") or today_str_cst()
+    as_of_time = overall.get("now_hhmm") or main_diag.get("now_hhmm") or "15:00"
+    is_market_closed = bool(main_diag.get("is_close"))
+
+    if str(as_of_date) == today_str_cst():
+        current_point_label = "今日收盘" if is_market_closed else f"今日{as_of_time}同刻"
+    else:
+        current_point_label = "最近交易日收盘"
+
+    index_reports = []
+    for c in INDEX_CODES:
+        d = diag_map.get(c, {}) or {}
+        if not d.get("ok"):
+            index_reports.append({
+                "code": c,
+                "name": INDEX_NAME_MAP.get(c, c.upper()),
+                "ok": False,
+                "error": d.get("error", "诊断不可用"),
+                "priceSeries": [],
+                "amountSeries": [],
+                "chartPoints": [],
+            })
+            continue
+
+        chart_points = build_index_chart_series(c, data_map.get(c, pd.DataFrame()), d, lookback_days)
+        reasons = d.get("reasons_full") if d.get("is_close") else d.get("reasons_same")
+        diag_tag = d.get("tag_full") if d.get("is_close") else d.get("tag_same")
+
+        index_reports.append({
+            "ok": True,
+            "code": c,
+            "name": d.get("name") or INDEX_NAME_MAP.get(c, c.upper()),
+            "last": _json_number(d.get("last_price"), 2),
+            "pct": _json_number(d.get("pct"), 2),
+            "amountBillion": _amount_yuan_to_billion(d.get("amt_full_today")),
+            "sameTimeBillion": _amount_yuan_to_billion(d.get("same_today_show")),
+            "diagTag": diag_tag,
+            "volumeTag": _volume_tag_from_diag(d),
+            "source": d.get("amount_source_label"),
+            "quoteSource": d.get("quote_source_label"),
+            "ratio5": _json_number(d.get("r5_same_show"), 2),
+            "ratio20": _json_number(d.get("r20_same_show"), 2),
+            "ratioYday": _json_number(d.get("ratio_yday_show"), 2),
+            "ratio3": _json_number(d.get("ratio_3_show"), 2),
+            "fullRatio5": _json_number(d.get("r5_full"), 2),
+            "fullRatio20": _json_number(d.get("r20_full"), 2),
+            "ma5": _json_number(d.get("ma5"), 2),
+            "ma10": _json_number(d.get("ma10"), 2),
+            "ma20": _json_number(d.get("ma20"), 2),
+            "low20": _json_number(d.get("support"), 2),
+            "high20": _json_number(d.get("resistance"), 2),
+            "kline": _candle_text(d.get("candle_flags")),
+            "reasons": reasons or [],
+            "histSampleDays": d.get("n_hist_days"),
+            "isMarketClosed": bool(d.get("is_close")),
+            "asOfTime": d.get("now_hhmm"),
+            "priceSeries": [p.get("price") for p in chart_points],
+            "amountSeries": [p.get("amountBillion") for p in chart_points],
+            "chartPoints": chart_points,
+        })
+
+    market_proxy_points = build_market_proxy_chart_series(index_reports, lookback_days)
+    pcts = overall.get("index_state", {}).get("pcts", {}) if isinstance(overall.get("index_state"), dict) else {}
+    northbound_report = fetch_northbound_flow_series_em(lookback_days=NORTHBOUND_LOOKBACK_DAYS)
+    enhanced_decision = _build_enhanced_decision_with_northbound(overall, northbound_report)
+
+    report = {
+        "meta": {
+            "generatedAt": datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S"),
+            "asOfDate": str(as_of_date),
+            "asOfTime": str(as_of_time),
+            "updatedAt": f"{as_of_date} {as_of_time}",
+            "isMarketClosed": is_market_closed,
+            "currentPointLabel": current_point_label,
+            "chartLookbackDays": int(lookback_days),
+            "dataNote": "今日盘中按同刻累计，盘后按全天口径；北向资金仅取已完成交易日，不含今日盘中。",
+        },
+        "updatedAt": f"{as_of_date} {as_of_time}",
+        "isMarketClosed": is_market_closed,
+        "currentPointLabel": current_point_label,
+        "finalDecision": overall.get("final_tag"),
+        "enhancedFinalDecision": enhanced_decision,
+        "final": {
+            "decision": overall.get("final_tag"),
+            "enhancedDecision": enhanced_decision,
+            "volumeTag": overall.get("volume_text"),
+            "structureTag": overall.get("structure"),
+            "northboundConfirmTag": northbound_report.get("confirmTag") if isinstance(northbound_report, dict) else None,
+            "northboundExplain": northbound_report.get("explain") if isinstance(northbound_report, dict) else None,
+        },
+        "marketProxy": {
+            "name": "两市成交额 proxy",
+            "description": "上证指数成交额 + 深证成指成交额；创业板不重复并入，只做结构参考。",
+            "amountBillion": _amount_yuan_to_billion(overall.get("amt_full_today")),
+            "sameTimeBillion": _amount_yuan_to_billion(overall.get("same_today")),
+            "ratio5": _json_number(overall.get("r5_same"), 2),
+            "ratio20": _json_number(overall.get("r20_same"), 2),
+            "ratioYday": _json_number(overall.get("r_yday"), 2),
+            "ratio3": _json_number(overall.get("r_3"), 2),
+            "fullRatio5": _json_number(overall.get("r5_full"), 2),
+            "fullRatio20": _json_number(overall.get("r20_full"), 2),
+            "volumeTag": overall.get("volume_text"),
+            "amountSource": overall.get("amount_source"),
+            "amountSeries": [p.get("amountBillion") for p in market_proxy_points],
+            "amountPoints": market_proxy_points,
+        },
+        "composite": {
+            "code": "market_proxy",
+            "name": "综合市场（两市成交额 proxy）",
+            "last": None,
+            "pct": None,
+            "priceSeries": [],
+            "amountSeries": [p.get("amountBillion") for p in market_proxy_points],
+            "amountPoints": market_proxy_points,
+            "note": "综合指数价格曲线第一版暂不接入；当前综合图先使用两市成交额 proxy。",
+        },
+        "indexes": index_reports,
+        "indexPcts": {
+            "sh000001": _json_number(pcts.get("sh000001"), 2),
+            "sz399001": _json_number(pcts.get("sz399001"), 2),
+            "sz399006": _json_number(pcts.get("sz399006"), 2),
+        },
+        "northbound": northbound_report,
+    }
+
+    return _json_clean(report)
+
+
+def write_report_json(report: dict, path: str = REPORT_JSON_PATH) -> None:
+    # 原子写出 dashboard JSON。默认静默成功，避免改变既有控制台输出。
+    folder = os.path.dirname(os.path.abspath(path))
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    tmp = path + f".tmp_{os.getpid()}_{int(time.time() * 1000)}"
+    # Windows PowerShell 5.x 默认可能按本地 ANSI/GBK 读取无 BOM UTF-8 文件，
+    # 会把中文显示成乱码；这里用 utf-8-sig 写出，方便直接 Get-Content 查看，
+    # 浏览器/JSON 解析也能正常识别。
+    with open(tmp, "w", encoding="utf-8-sig") as f:
+        json.dump(_json_clean(report), f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
 def quick_summary_and_diag():
     print(">>> 启动 A 股快讯 & 诊断（pytdx 历史 + Wind主源/QQ兜底 + 分析模块）")
 
@@ -2489,6 +3398,15 @@ def quick_summary_and_diag():
     )
 
     print_market_overall_diagnostic(index_diag_map)
+
+    # 结构化报告输出给前端 dashboard；控制台原输出保持不变。
+    try:
+        overall_diag = build_market_overall_diag(index_diag_map)
+        report = collect_report(data_map, index_diag_map, overall_diag=overall_diag)
+        write_report_json(report)
+    except Exception as e:
+        # 只在失败时提示，不影响主诊断流程。
+        print(f"[report] 写出结构化报告失败：{repr(e)}")
 
 
 def main():
