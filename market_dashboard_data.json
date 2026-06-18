@@ -1,0 +1,1332 @@
+﻿{
+  "meta": {
+    "generatedAt": "2026-06-18 13:35:16",
+    "asOfDate": "2026-06-18",
+    "asOfTime": "13:34",
+    "updatedAt": "2026-06-18 13:34",
+    "isMarketClosed": false,
+    "currentPointLabel": "今日13:34同刻",
+    "chartLookbackDays": 20,
+    "dataNote": "今日盘中按同刻累计，盘后按全天口径；北向资金仅取已完成交易日，不含今日盘中。"
+  },
+  "updatedAt": "2026-06-18 13:34",
+  "isMarketClosed": false,
+  "currentPointLabel": "今日13:34同刻",
+  "finalDecision": "✅ 放量共振走强",
+  "enhancedFinalDecision": "✅ 放量共振走强；同时近5日净流出71.09亿；近20个交易日累计净流出143.52亿；窗口内日均-7.18亿；最新日偏离z=-0.39，外部资金确认度偏弱，当前上涨仍需继续放量和资金回流确认。",
+  "final": {
+    "decision": "✅ 放量共振走强",
+    "enhancedDecision": "✅ 放量共振走强；同时近5日净流出71.09亿；近20个交易日累计净流出143.52亿；窗口内日均-7.18亿；最新日偏离z=-0.39，外部资金确认度偏弱，当前上涨仍需继续放量和资金回流确认。",
+    "volumeTag": "两市量能明显放大",
+    "structureTag": "创业板明显强于上证，成长线相对占优",
+    "northboundConfirmTag": "北向确认偏负面",
+    "northboundExplain": "近5日净流出71.09亿；近20个交易日累计净流出143.52亿；窗口内日均-7.18亿；最新日偏离z=-0.39，外部资金确认度偏弱。"
+  },
+  "marketProxy": {
+    "name": "两市成交额 proxy",
+    "description": "上证指数成交额 + 深证成指成交额；创业板不重复并入，只做结构参考。",
+    "amountBillion": 25004.69,
+    "sameTimeBillion": 25008.13,
+    "ratio5": 1.11,
+    "ratio20": 1.12,
+    "ratioYday": 1.09,
+    "ratio3": 1.08,
+    "fullRatio5": 0.84,
+    "fullRatio20": 0.83,
+    "volumeTag": "两市量能明显放大",
+    "amountSource": "Wind主源快照 + Wind主源快照",
+    "amountSeries": [
+      29033.21,
+      32057.3,
+      32436.92,
+      32385.62,
+      29681.51,
+      33190.32,
+      28774.88,
+      27929.92,
+      31302.79,
+      27576.69,
+      30691.92,
+      27927.38,
+      26402.96,
+      26192.43,
+      25520.22,
+      32149.5,
+      30311.99,
+      30717.66,
+      30917.64,
+      25008.12
+    ],
+    "amountPoints": [
+      {
+        "date": "2026-05-22",
+        "label": "全天",
+        "amountBillion": 29033.21,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-25",
+        "label": "全天",
+        "amountBillion": 32057.3,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-26",
+        "label": "全天",
+        "amountBillion": 32436.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-27",
+        "label": "全天",
+        "amountBillion": 32385.62,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-28",
+        "label": "全天",
+        "amountBillion": 29681.51,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-29",
+        "label": "全天",
+        "amountBillion": 33190.32,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-01",
+        "label": "全天",
+        "amountBillion": 28774.88,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-02",
+        "label": "全天",
+        "amountBillion": 27929.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-03",
+        "label": "全天",
+        "amountBillion": 31302.79,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-04",
+        "label": "全天",
+        "amountBillion": 27576.69,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-05",
+        "label": "全天",
+        "amountBillion": 30691.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-08",
+        "label": "全天",
+        "amountBillion": 27927.38,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-09",
+        "label": "全天",
+        "amountBillion": 26402.96,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-10",
+        "label": "全天",
+        "amountBillion": 26192.43,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-11",
+        "label": "全天",
+        "amountBillion": 25520.22,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-12",
+        "label": "全天",
+        "amountBillion": 32149.5,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-15",
+        "label": "全天",
+        "amountBillion": 30311.99,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-16",
+        "label": "全天",
+        "amountBillion": 30717.66,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-17",
+        "label": "全天",
+        "amountBillion": 30917.64,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-18",
+        "label": "今日13:34同刻",
+        "amountBillion": 25008.12,
+        "isToday": true,
+        "isPartial": true
+      }
+    ]
+  },
+  "composite": {
+    "code": "market_proxy",
+    "name": "综合市场（两市成交额 proxy）",
+    "last": null,
+    "pct": null,
+    "priceSeries": [],
+    "amountSeries": [
+      29033.21,
+      32057.3,
+      32436.92,
+      32385.62,
+      29681.51,
+      33190.32,
+      28774.88,
+      27929.92,
+      31302.79,
+      27576.69,
+      30691.92,
+      27927.38,
+      26402.96,
+      26192.43,
+      25520.22,
+      32149.5,
+      30311.99,
+      30717.66,
+      30917.64,
+      25008.12
+    ],
+    "amountPoints": [
+      {
+        "date": "2026-05-22",
+        "label": "全天",
+        "amountBillion": 29033.21,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-25",
+        "label": "全天",
+        "amountBillion": 32057.3,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-26",
+        "label": "全天",
+        "amountBillion": 32436.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-27",
+        "label": "全天",
+        "amountBillion": 32385.62,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-28",
+        "label": "全天",
+        "amountBillion": 29681.51,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-05-29",
+        "label": "全天",
+        "amountBillion": 33190.32,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-01",
+        "label": "全天",
+        "amountBillion": 28774.88,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-02",
+        "label": "全天",
+        "amountBillion": 27929.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-03",
+        "label": "全天",
+        "amountBillion": 31302.79,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-04",
+        "label": "全天",
+        "amountBillion": 27576.69,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-05",
+        "label": "全天",
+        "amountBillion": 30691.92,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-08",
+        "label": "全天",
+        "amountBillion": 27927.38,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-09",
+        "label": "全天",
+        "amountBillion": 26402.96,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-10",
+        "label": "全天",
+        "amountBillion": 26192.43,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-11",
+        "label": "全天",
+        "amountBillion": 25520.22,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-12",
+        "label": "全天",
+        "amountBillion": 32149.5,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-15",
+        "label": "全天",
+        "amountBillion": 30311.99,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-16",
+        "label": "全天",
+        "amountBillion": 30717.66,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-17",
+        "label": "全天",
+        "amountBillion": 30917.64,
+        "isToday": false,
+        "isPartial": false
+      },
+      {
+        "date": "2026-06-18",
+        "label": "今日13:34同刻",
+        "amountBillion": 25008.12,
+        "isToday": true,
+        "isPartial": true
+      }
+    ],
+    "note": "综合指数价格曲线第一版暂不接入；当前综合图先使用两市成交额 proxy。"
+  },
+  "indexes": [
+    {
+      "ok": true,
+      "code": "sh000001",
+      "name": "上证指数",
+      "last": 4104.77,
+      "pct": -0.08,
+      "amountBillion": 11806.16,
+      "sameTimeBillion": 11807.86,
+      "diagTag": "⚠️量能略强但未企稳",
+      "volumeTag": "量能略强",
+      "source": "Wind主源快照",
+      "quoteSource": "Wind主源快照",
+      "ratio5": 1.14,
+      "ratio20": 1.16,
+      "ratioYday": 1.14,
+      "ratio3": 1.13,
+      "fullRatio5": 0.86,
+      "fullRatio20": 0.86,
+      "ma5": 4086.71,
+      "ma10": 4041.09,
+      "ma20": 4067.86,
+      "low20": 3927.85,
+      "high20": 4153.88,
+      "kline": "长下影=否，大阳线=否，止跌回升=否",
+      "reasons": [
+        "今日 / 前5日同刻≈1.14x",
+        "今日 / 前20日同刻≈1.16x",
+        "今日 / 昨日同刻≈1.14x",
+        "今日 / 近3日同刻≈1.13x"
+      ],
+      "histSampleDays": 5,
+      "isMarketClosed": false,
+      "asOfTime": "13:34",
+      "priceSeries": [
+        4112.9,
+        4152.57,
+        4145.37,
+        4093.73,
+        4098.64,
+        4068.57,
+        4057.74,
+        4075.1,
+        4083.97,
+        4057.78,
+        4027.74,
+        3959.34,
+        4010.03,
+        3993.23,
+        3987.01,
+        4031.51,
+        4096.47,
+        4091.89,
+        4108.08,
+        4104.77
+      ],
+      "amountSeries": [
+        12858.48,
+        14456.55,
+        14616.85,
+        14734.49,
+        13613.26,
+        15320.67,
+        13198.02,
+        12809.66,
+        14297.56,
+        12746.52,
+        13638.88,
+        12672.77,
+        11730.89,
+        12270.7,
+        11855.55,
+        15374.02,
+        14035.86,
+        13680.46,
+        14031.46,
+        11807.86
+      ],
+      "chartPoints": [
+        {
+          "date": "2026-05-22",
+          "label": "全天",
+          "price": 4112.9,
+          "amountBillion": 12858.48,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-25",
+          "label": "全天",
+          "price": 4152.57,
+          "amountBillion": 14456.55,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-26",
+          "label": "全天",
+          "price": 4145.37,
+          "amountBillion": 14616.85,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-27",
+          "label": "全天",
+          "price": 4093.73,
+          "amountBillion": 14734.49,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-28",
+          "label": "全天",
+          "price": 4098.64,
+          "amountBillion": 13613.26,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-29",
+          "label": "全天",
+          "price": 4068.57,
+          "amountBillion": 15320.67,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-01",
+          "label": "全天",
+          "price": 4057.74,
+          "amountBillion": 13198.02,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-02",
+          "label": "全天",
+          "price": 4075.1,
+          "amountBillion": 12809.66,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-03",
+          "label": "全天",
+          "price": 4083.97,
+          "amountBillion": 14297.56,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-04",
+          "label": "全天",
+          "price": 4057.78,
+          "amountBillion": 12746.52,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-05",
+          "label": "全天",
+          "price": 4027.74,
+          "amountBillion": 13638.88,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-08",
+          "label": "全天",
+          "price": 3959.34,
+          "amountBillion": 12672.77,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-09",
+          "label": "全天",
+          "price": 4010.03,
+          "amountBillion": 11730.89,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-10",
+          "label": "全天",
+          "price": 3993.23,
+          "amountBillion": 12270.7,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-11",
+          "label": "全天",
+          "price": 3987.01,
+          "amountBillion": 11855.55,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-12",
+          "label": "全天",
+          "price": 4031.51,
+          "amountBillion": 15374.02,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-15",
+          "label": "全天",
+          "price": 4096.47,
+          "amountBillion": 14035.86,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-16",
+          "label": "全天",
+          "price": 4091.89,
+          "amountBillion": 13680.46,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-17",
+          "label": "全天",
+          "price": 4108.08,
+          "amountBillion": 14031.46,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-18",
+          "label": "今日13:34同刻",
+          "price": 4104.77,
+          "amountBillion": 11807.86,
+          "isToday": true,
+          "isPartial": true
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "code": "sz399001",
+      "name": "深证成指",
+      "last": 16067.81,
+      "pct": 1.18,
+      "amountBillion": 13198.53,
+      "sameTimeBillion": 13200.26,
+      "diagTag": "⚠️量能略强但未企稳",
+      "volumeTag": "量能略强",
+      "source": "Wind主源快照",
+      "quoteSource": "Wind主源快照",
+      "ratio5": 1.09,
+      "ratio20": 1.09,
+      "ratioYday": 1.04,
+      "ratio3": 1.04,
+      "fullRatio5": 0.82,
+      "fullRatio20": 0.81,
+      "ma5": 15625.15,
+      "ma10": 15333.65,
+      "ma20": 15506.89,
+      "low20": 14681.65,
+      "high20": 16081.37,
+      "kline": "长下影=否，大阳线=否，止跌回升=否",
+      "reasons": [
+        "今日 / 前5日同刻≈1.09x",
+        "今日 / 前20日同刻≈1.09x",
+        "今日 / 昨日同刻≈1.04x",
+        "今日 / 近3日同刻≈1.04x"
+      ],
+      "histSampleDays": 5,
+      "isMarketClosed": false,
+      "asOfTime": "13:34",
+      "priceSeries": [
+        15597.3,
+        15856.61,
+        15876.16,
+        15736.47,
+        15861.89,
+        15575.14,
+        15340.36,
+        15591.14,
+        15704.72,
+        15661.58,
+        15314.71,
+        14821.2,
+        15268.73,
+        14954.1,
+        14851.98,
+        14963.4,
+        15531.11,
+        15675.25,
+        15880.96,
+        16067.81
+      ],
+      "amountSeries": [
+        16174.73,
+        17600.75,
+        17820.07,
+        17651.13,
+        16068.25,
+        17869.65,
+        15576.86,
+        15120.26,
+        17005.23,
+        14830.17,
+        17053.04,
+        15254.61,
+        14672.07,
+        13921.73,
+        13664.67,
+        16775.48,
+        16276.13,
+        17037.2,
+        16886.18,
+        13200.26
+      ],
+      "chartPoints": [
+        {
+          "date": "2026-05-22",
+          "label": "全天",
+          "price": 15597.3,
+          "amountBillion": 16174.73,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-25",
+          "label": "全天",
+          "price": 15856.61,
+          "amountBillion": 17600.75,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-26",
+          "label": "全天",
+          "price": 15876.16,
+          "amountBillion": 17820.07,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-27",
+          "label": "全天",
+          "price": 15736.47,
+          "amountBillion": 17651.13,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-28",
+          "label": "全天",
+          "price": 15861.89,
+          "amountBillion": 16068.25,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-29",
+          "label": "全天",
+          "price": 15575.14,
+          "amountBillion": 17869.65,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-01",
+          "label": "全天",
+          "price": 15340.36,
+          "amountBillion": 15576.86,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-02",
+          "label": "全天",
+          "price": 15591.14,
+          "amountBillion": 15120.26,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-03",
+          "label": "全天",
+          "price": 15704.72,
+          "amountBillion": 17005.23,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-04",
+          "label": "全天",
+          "price": 15661.58,
+          "amountBillion": 14830.17,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-05",
+          "label": "全天",
+          "price": 15314.71,
+          "amountBillion": 17053.04,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-08",
+          "label": "全天",
+          "price": 14821.2,
+          "amountBillion": 15254.61,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-09",
+          "label": "全天",
+          "price": 15268.73,
+          "amountBillion": 14672.07,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-10",
+          "label": "全天",
+          "price": 14954.1,
+          "amountBillion": 13921.73,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-11",
+          "label": "全天",
+          "price": 14851.98,
+          "amountBillion": 13664.67,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-12",
+          "label": "全天",
+          "price": 14963.4,
+          "amountBillion": 16775.48,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-15",
+          "label": "全天",
+          "price": 15531.11,
+          "amountBillion": 16276.13,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-16",
+          "label": "全天",
+          "price": 15675.25,
+          "amountBillion": 17037.2,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-17",
+          "label": "全天",
+          "price": 15880.96,
+          "amountBillion": 16886.18,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-18",
+          "label": "今日13:34同刻",
+          "price": 16067.81,
+          "amountBillion": 13200.26,
+          "isToday": true,
+          "isPartial": true
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "code": "sz399006",
+      "name": "创业板指",
+      "last": 4254.53,
+      "pct": 2.1,
+      "amountBillion": 6469.96,
+      "sameTimeBillion": 6470.89,
+      "diagTag": "⚠️量能略强但未企稳",
+      "volumeTag": "量能略强",
+      "source": "Wind主源快照",
+      "quoteSource": "Wind主源快照",
+      "ratio5": 1.1,
+      "ratio20": 1.11,
+      "ratioYday": 1.05,
+      "ratio3": 1.04,
+      "fullRatio5": 0.82,
+      "fullRatio20": 0.82,
+      "ma5": 4078.21,
+      "ma10": 3978.86,
+      "ma20": 4010.94,
+      "low20": 3755.61,
+      "high20": 4259.96,
+      "kline": "长下影=否，大阳线=是，止跌回升=否",
+      "reasons": [
+        "今日 / 前5日同刻≈1.10x",
+        "今日 / 前20日同刻≈1.11x",
+        "今日 / 昨日同刻≈1.05x",
+        "今日 / 近3日同刻≈1.04x"
+      ],
+      "histSampleDays": 5,
+      "isMarketClosed": false,
+      "asOfTime": "13:34",
+      "priceSeries": [
+        3938.5,
+        4021.16,
+        4043.07,
+        4045.77,
+        4125.07,
+        4037.95,
+        3950.94,
+        4055.87,
+        4122.99,
+        4088.88,
+        3957.94,
+        3811.79,
+        3961.75,
+        3854.79,
+        3811.25,
+        3830.35,
+        4033.53,
+        4102.94,
+        4167.05,
+        4254.53
+      ],
+      "amountSeries": [
+        7919.96,
+        8840.36,
+        8423.67,
+        8396.65,
+        7733.27,
+        8556.62,
+        7345.55,
+        7199.49,
+        8092.14,
+        7032.41,
+        8210.35,
+        7272.92,
+        7241.88,
+        6532.53,
+        6542.81,
+        8110.01,
+        7962.07,
+        8425.19,
+        8304.32,
+        6470.89
+      ],
+      "chartPoints": [
+        {
+          "date": "2026-05-22",
+          "label": "全天",
+          "price": 3938.5,
+          "amountBillion": 7919.96,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-25",
+          "label": "全天",
+          "price": 4021.16,
+          "amountBillion": 8840.36,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-26",
+          "label": "全天",
+          "price": 4043.07,
+          "amountBillion": 8423.67,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-27",
+          "label": "全天",
+          "price": 4045.77,
+          "amountBillion": 8396.65,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-28",
+          "label": "全天",
+          "price": 4125.07,
+          "amountBillion": 7733.27,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-05-29",
+          "label": "全天",
+          "price": 4037.95,
+          "amountBillion": 8556.62,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-01",
+          "label": "全天",
+          "price": 3950.94,
+          "amountBillion": 7345.55,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-02",
+          "label": "全天",
+          "price": 4055.87,
+          "amountBillion": 7199.49,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-03",
+          "label": "全天",
+          "price": 4122.99,
+          "amountBillion": 8092.14,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-04",
+          "label": "全天",
+          "price": 4088.88,
+          "amountBillion": 7032.41,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-05",
+          "label": "全天",
+          "price": 3957.94,
+          "amountBillion": 8210.35,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-08",
+          "label": "全天",
+          "price": 3811.79,
+          "amountBillion": 7272.92,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-09",
+          "label": "全天",
+          "price": 3961.75,
+          "amountBillion": 7241.88,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-10",
+          "label": "全天",
+          "price": 3854.79,
+          "amountBillion": 6532.53,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-11",
+          "label": "全天",
+          "price": 3811.25,
+          "amountBillion": 6542.81,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-12",
+          "label": "全天",
+          "price": 3830.35,
+          "amountBillion": 8110.01,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-15",
+          "label": "全天",
+          "price": 4033.53,
+          "amountBillion": 7962.07,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-16",
+          "label": "全天",
+          "price": 4102.94,
+          "amountBillion": 8425.19,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-17",
+          "label": "全天",
+          "price": 4167.05,
+          "amountBillion": 8304.32,
+          "isToday": false,
+          "isPartial": false
+        },
+        {
+          "date": "2026-06-18",
+          "label": "今日13:34同刻",
+          "price": 4254.53,
+          "amountBillion": 6470.89,
+          "isToday": true,
+          "isPartial": true
+        }
+      ]
+    }
+  ],
+  "indexPcts": {
+    "sh000001": -0.08,
+    "sz399001": 1.18,
+    "sz399006": 2.1
+  },
+  "northbound": {
+    "available": true,
+    "source": "东方财富",
+    "asOf": "2026-06-17",
+    "note": "北向资金数据来自东方财富沪深港通历史数据；仅取已完成交易日，不含今日盘中。",
+    "title": "北向资金最近20个交易日",
+    "requestedLookbackDays": 20,
+    "actualDays": 20,
+    "isComplete": true,
+    "role": "辅助确认因子",
+    "weightHint": "约20%，不改变指数结构和两市量能的主判断",
+    "netBuySeries": [
+      27.1,
+      -12.6,
+      -41.97,
+      -38.29,
+      16.14,
+      75.61,
+      42.22,
+      28.7,
+      2.06,
+      24.64,
+      -42.48,
+      -74.15,
+      13.51,
+      -85.16,
+      -7.76,
+      -23.35,
+      -24.0,
+      12.38,
+      -14.27,
+      -21.85
+    ],
+    "netBuyPoints": [
+      {
+        "date": "2026-05-20",
+        "label": "已完成交易日",
+        "netBuyBillion": 27.1,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 27.1
+      },
+      {
+        "date": "2026-05-21",
+        "label": "已完成交易日",
+        "netBuyBillion": -12.6,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": 14.5
+      },
+      {
+        "date": "2026-05-22",
+        "label": "已完成交易日",
+        "netBuyBillion": -41.97,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -27.47
+      },
+      {
+        "date": "2026-05-26",
+        "label": "已完成交易日",
+        "netBuyBillion": -38.29,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -65.76
+      },
+      {
+        "date": "2026-05-27",
+        "label": "已完成交易日",
+        "netBuyBillion": 16.14,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": -49.62
+      },
+      {
+        "date": "2026-05-28",
+        "label": "已完成交易日",
+        "netBuyBillion": 75.61,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 25.99
+      },
+      {
+        "date": "2026-05-29",
+        "label": "已完成交易日",
+        "netBuyBillion": 42.22,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 68.21
+      },
+      {
+        "date": "2026-06-01",
+        "label": "已完成交易日",
+        "netBuyBillion": 28.7,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 96.91
+      },
+      {
+        "date": "2026-06-02",
+        "label": "已完成交易日",
+        "netBuyBillion": 2.06,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 98.97
+      },
+      {
+        "date": "2026-06-03",
+        "label": "已完成交易日",
+        "netBuyBillion": 24.64,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 123.61
+      },
+      {
+        "date": "2026-06-04",
+        "label": "已完成交易日",
+        "netBuyBillion": -42.48,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": 81.13
+      },
+      {
+        "date": "2026-06-05",
+        "label": "已完成交易日",
+        "netBuyBillion": -74.15,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": 6.98
+      },
+      {
+        "date": "2026-06-08",
+        "label": "已完成交易日",
+        "netBuyBillion": 13.51,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": 20.49
+      },
+      {
+        "date": "2026-06-09",
+        "label": "已完成交易日",
+        "netBuyBillion": -85.16,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -64.67
+      },
+      {
+        "date": "2026-06-10",
+        "label": "已完成交易日",
+        "netBuyBillion": -7.76,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -72.43
+      },
+      {
+        "date": "2026-06-11",
+        "label": "已完成交易日",
+        "netBuyBillion": -23.35,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -95.78
+      },
+      {
+        "date": "2026-06-12",
+        "label": "已完成交易日",
+        "netBuyBillion": -24.0,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -119.78
+      },
+      {
+        "date": "2026-06-15",
+        "label": "已完成交易日",
+        "netBuyBillion": 12.38,
+        "source": "东方财富",
+        "isPositive": true,
+        "cumulativeBillion": -107.4
+      },
+      {
+        "date": "2026-06-16",
+        "label": "已完成交易日",
+        "netBuyBillion": -14.27,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -121.67
+      },
+      {
+        "date": "2026-06-17",
+        "label": "已完成交易日",
+        "netBuyBillion": -21.85,
+        "source": "东方财富",
+        "isPositive": false,
+        "cumulativeBillion": -143.52
+      }
+    ],
+    "cumulativeSeries": [
+      27.1,
+      14.5,
+      -27.47,
+      -65.76,
+      -49.62,
+      25.99,
+      68.21,
+      96.91,
+      98.97,
+      123.61,
+      81.13,
+      6.98,
+      20.49,
+      -64.67,
+      -72.43,
+      -95.78,
+      -119.78,
+      -107.4,
+      -121.67,
+      -143.52
+    ],
+    "sum5Billion": -71.09,
+    "sum20Billion": -143.52,
+    "sumAvailableBillion": -143.52,
+    "lastNetBuyBillion": -21.85,
+    "meanBillion": -7.18,
+    "stdBillion": 38.1,
+    "zScoreLatest": -0.39,
+    "shortTermTag": "短期偏流出",
+    "windowTag": "阶段性净流出明显",
+    "latestZTag": "最新日处于正常波动",
+    "confirmTag": "北向确认偏负面",
+    "explain": "近5日净流出71.09亿；近20个交易日累计净流出143.52亿；窗口内日均-7.18亿；最新日偏离z=-0.39，外部资金确认度偏弱。"
+  }
+}
